@@ -56,8 +56,8 @@ echo "Using Python: $(which python3)"
 
 # Base paths
 PROJECT_ROOT="/Group16T/common/lcy/dslab_lcy/GitRepo/scLightGAT"
-SCLIGHTGAT_DIR="${PROJECT_ROOT}/scLightGAT.main"
-DATA_DIR="${PROJECT_ROOT}/data/scLightGAT_data"
+SCLIGHTGAT_DIR="${PROJECT_ROOT}/scLightGAT"
+DATA_DIR="${PROJECT_ROOT}/scLightGAT_data"
 
 # Training data
 TRAIN_DATA="${DATA_DIR}/Integrated_training/train.h5ad"
@@ -97,7 +97,9 @@ declare -A DATASETS=(
     ["GSE153935"]="${TEST_DATA_DIR}/GSE153935.h5ad"
     ["GSE166555"]="${TEST_DATA_DIR}/GSE166555.h5ad"
     ["Zhengsorted"]="${TEST_DATA_DIR}/Zhengsorted.h5ad"
-    ["CAF"]="${CAF_TEST_DATA}"  # CAF test dataset
+    ["CAF"]="${CAF_TEST_DATA}"
+    ["lung_full"]="${TEST_DATA_DIR}/lung_full.h5ad"
+    ["sapiens_full"]="${TEST_DATA_DIR}/sapiens_full.h5ad"
 )
 
 # Recommended batch keys per dataset (analyzed from column distributions)
@@ -109,6 +111,8 @@ declare -A BATCH_KEYS=(
     ["GSE166555"]="case_id"           # 12 unique cases
     ["Zhengsorted"]=""                 # None (using default)
     ["CAF"]=""                         # None for CAF
+    ["lung_full"]="status"            # Optimal batch key based on previous analysis
+    ["sapiens_full"]="donor"          # Optimal batch key based on previous analysis
 )
 
 # ============================================================================
@@ -409,22 +413,80 @@ main() {
     mkdir -p "${OUTPUT_DIR}"
     
     # Run on specific dataset or all datasets
+    # Run on specific dataset or interactive CAF mode or all datasets
     if [ -n "${DATASET_NAME}" ]; then
-        if [ -z "${DATASETS[$DATASET_NAME]}" ]; then
-            echo "Error: Unknown dataset: ${DATASET_NAME}"
-            print_usage
-            exit 1
-        fi
-        
-        test_path="${DATASETS[$DATASET_NAME]}"
-        if [ ! -f "${test_path}" ]; then
-            echo "Error: Test data not found: ${test_path}"
-            exit 1
+        # Check if it is a pre-defined dataset
+        if [ -n "${DATASETS[$DATASET_NAME]}" ]; then
+            test_path="${DATASETS[$DATASET_NAME]}"
+        else
+            # Allow using a direct file path if not a pre-defined name
+            if [ -f "${DATASET_NAME}" ]; then
+                test_path="${DATASET_NAME}"
+                # Extract filename without extension for report naming
+                filename=$(basename "${test_path}")
+                DATASET_NAME="${filename%.*}"
+            else
+                echo "Error: Unknown dataset name or file not found: ${DATASET_NAME}"
+                print_usage
+                exit 1
+            fi
         fi
         
         run_training "${DATASET_NAME}" "${test_path}"
+
+    elif [[ "${CAF_MODE}" == "True" ]]; then
+        # Interactive CAF Mode
+        print_header "CAF Interactive Mode"
+        echo "Using CAF training data: ${CAF_TRAIN_DATA}"
+        echo "This data will be used to annotate your independent test set."
+        echo ""
+        echo "Please provide the absolute path to your independent test dataset (.h5ad):"
+        read -p "> " custom_test_path
+        
+        # Remove quotes if user added them
+        custom_test_path="${custom_test_path%\"}"
+        custom_test_path="${custom_test_path#\"}"
+        
+        if [ ! -f "${custom_test_path}" ]; then
+            echo "Error: File not found: ${custom_test_path}"
+            exit 1
+        fi
+        
+        # Derive a dataset name from the filename
+        filename=$(basename "${custom_test_path}")
+        custom_dataset_name="${filename%.*}"
+        
+        echo "detected dataset name: ${custom_dataset_name}"
+        run_training "${custom_dataset_name}" "${custom_test_path}"
+        
+    elif [[ "${OPTIMIZE}" == "True" ]]; then
+        # Optimization Mode
+        if [ -z "${DATASET_NAME}" ]; then
+             echo "Error: Optimization requires a dataset name (e.g. ./run_sclight.gat.sh --optimize sapiens_full)"
+             exit 1
+        fi
+        
+        # We need to find the dataset path first (re-using logic from above but simpler)
+        if [ -n "${DATASETS[$DATASET_NAME]}" ]; then
+            test_path="${DATASETS[$DATASET_NAME]}"
+        else
+            echo "Error: Unknown dataset for optimization: ${DATASET_NAME}"
+            exit 1
+        fi
+        
+        print_header "Running Optuna Optimization on ${DATASET_NAME}"
+        echo "Trials: ${OPTUNA_TRIALS}"
+        
+        export PYTHONPATH="${SCLIGHTGAT_DIR}:${PYTHONPATH}"
+        
+        # Call the optimization script (restored from backup logic)
+        python3 -m scLightGAT.training.dvae_optuna \
+            --data_path "${test_path}" \
+            --n_trials "${OPTUNA_TRIALS}" \
+            --save_dir "${OUTPUT_DIR}/${DATASET_NAME}"
+            
     else
-        echo "Running on all datasets..."
+        echo "Running on all pre-defined datasets..."
         for dataset_name in "${!DATASETS[@]}"; do
             test_path="${DATASETS[$dataset_name]}"
             if [ -f "${test_path}" ]; then

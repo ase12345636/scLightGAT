@@ -22,11 +22,11 @@ REPO_ID="Alfiechuang/scLightGAT"
 CURRENT_DIR=$(pwd)
 DIR_NAME=$(basename "$CURRENT_DIR")
 
-if [ "$DIR_NAME" == "scLightGAT.main" ]; then
-    TARGET_ROOT="../data/scLightGAT_data"
+if [ "$DIR_NAME" == "scLightGAT" ]; then
+    TARGET_ROOT="./scLightGAT_data"
 else
-    # Default to creating data/ folder in current dir if not inside main repo
-    TARGET_ROOT="./data/scLightGAT_data"
+    # Default to creating scLightGAT_data/ folder in current dir if not inside main repo
+    TARGET_ROOT="./scLightGAT_data"
 fi
 
 echo "========================================================"

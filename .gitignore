@@ -1,7 +1,6 @@
 .basilisk_cache
-scLightGAT.backup/
 caf.related/
-thesis.exps_results/
-thesis.exps_results/
-caf.related/
+docker/
 scLightGAT.backup/
+scLightGAT_data/
+thesis.exps_results/
