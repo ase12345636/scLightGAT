@@ -179,7 +179,13 @@ run_training() {
         output_path="${OUTPUT_DIR}/${dataset_name}/hierarchical"
     fi
     
-    print_header "Training on ${dataset_name}"
+    # Determine pipeline title
+    local pipeline_title="Independent Testing Pipeline: ${dataset_name}"
+    if [[ "${HIERARCHICAL}" == "True" ]]; then
+        pipeline_title="Hierarchical Testing Pipeline: ${dataset_name}"
+    fi
+
+    print_header "${pipeline_title}"
     echo "Test data: ${test_path}"
     echo "Output: ${output_path}"
     echo "DVAE epochs: ${DVAE_EPOCHS}"
@@ -443,7 +449,7 @@ main() {
 
     elif [[ "${CAF_MODE}" == "True" ]]; then
         # Interactive CAF Mode
-        print_header "CAF Interactive Mode"
+        print_header "CAF Testing Pipeline"
         echo "Using CAF training data: ${CAF_TRAIN_DATA}"
         echo "This data will be used to annotate your independent test set."
         echo ""
@@ -481,10 +487,10 @@ main() {
             exit 1
         fi
         
-        print_header "Running Optuna Optimization on ${DATASET_NAME}"
+        print_header "Optimization Pipeline: ${DATASET_NAME}"
         echo "Trials: ${OPTUNA_TRIALS}"
         
-        export PYTHONPATH="${SCLIGHTGAT_DIR}:${PYTHONPATH}"
+        export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH}"
         
         # Call the optimization script (restored from backup logic)
         python3 -m scLightGAT.training.dvae_optuna \

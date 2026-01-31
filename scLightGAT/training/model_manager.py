@@ -1,4 +1,5 @@
 import logging
+import time
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -204,12 +205,13 @@ class CellTypeAnnotator:
         epoch_losses = []
         
         # Training loop
-        for epoch in range(epochs):
+        pbar = tqdm(range(epochs), desc="Training DVAE")
+        for epoch in pbar:
             self.dvae.train()
             epoch_loss = 0
             
-            # Process batches
-            for batch_idx, batch in enumerate(tqdm(data_loader, desc=f"Epoch {epoch+1}/{epochs}")):
+            # Process batches (inner loop silent to keep one line output)
+            for batch_idx, batch in enumerate(data_loader):
                 batch = batch[0].to(self.device)
                 optimizer.zero_grad()
                 
@@ -270,14 +272,12 @@ class CellTypeAnnotator:
             else:
                 no_improve += 1
                 if no_improve >= patience:
-                    logger.info(f"Early stopping at epoch {epoch + 1}")
+                    pbar.write(f"Early stopping at epoch {epoch + 1}")
                     break
             
-            # Log progress
-            if (epoch + 1) % 5 == 0:
-                logger.info(f"Epoch [{epoch+1}/{epochs}], "
-                           f"Loss: {avg_loss:.4f}, "
-                           f"LR: {scheduler.get_last_lr()[0]:.6f}")
+            # Update outer progress bar with metrics
+            pbar.set_postfix({"loss": f"{avg_loss:.4f}", "lr": f"{scheduler.get_last_lr()[0]:.6f}"})
+
         
         # Load best model
         if best_model is not None:
@@ -1151,19 +1151,25 @@ class CellTypeAnnotator:
         logger.info("Starting complete annotation pipeline")
         
         # Feature extraction
+        start_time = time.time()
         feature_data = self.run_feature_extraction(
             adata_train,
             adata_test
         )
+        logger.info(f"Feature extraction completed in {time.time() - start_time:.2f} seconds")
         
         # Classification
+        start_time = time.time()
         classification_data = self.run_classification(feature_data)
+        logger.info(f"Classification completed in {time.time() - start_time:.2f} seconds")
         
         # Refinement
+        start_time = time.time()
         refined_data, gat_losses = self.run_refinement(
             classification_data,
             batch_key=None
         )
+        logger.info(f"Refinement (GAT) completed in {time.time() - start_time:.2f} seconds")
         
         # Subtype prediction (optional)
         if run_subtypes:

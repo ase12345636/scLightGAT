@@ -139,11 +139,11 @@ class LightGBMModel:
         # Evaluate model performance
         y_test_pred = self.model.predict(X_test)
         test_accuracy = accuracy_score(y_test, y_test_pred)
-        logger.info(f'Test accuracy: {test_accuracy:.4f}')
+        # logger.info(f'Internal Validation Accuracy: {test_accuracy:.4f}')
 
         # Generate detailed classification report
-        report = classification_report(y_test, y_test_pred)
-        logger.info(f'Classification report:\n{report}')
+        # report = classification_report(y_test, y_test_pred)
+        # logger.debug(f'Internal Classification report:\n{report}')
 
         # Plot confusion matrix
         self._plot_confusion_matrix(y_test, y_test_pred, class_names, group_name)

@@ -5,6 +5,7 @@ import argparse
 import os
 import scanpy as sc
 import torch
+import time
 from scLightGAT.logger_config import setup_logger
 from scLightGAT.training.model_manager import CellTypeAnnotator 
 from scLightGAT.visualization.visualization import plot_umap_by_label
@@ -72,22 +73,21 @@ def standardize_celltype_labels(adata, label_col=None, train_labels=None):
     return adata
 
 def train_pipeline(train_path: str, test_path: str, output_path: str, model_dir: str, train_dvae: bool, use_gat: bool, dvae_epochs: int, gat_epochs: int, hierarchical: bool = False, batch_key: str = None):
+    start_time = time.time()
     logger.info("[TRAIN MODE] Starting training pipeline")
-    logger.info(f"Train data: {train_path}")
-    logger.info(f"Test data: {test_path}")
-    logger.info(f"Output dir: {output_path}")
-    logger.info(f"Model save dir: {model_dir}")
-    logger.info(f"Train DVAE: {train_dvae}, Use GAT: {use_gat}, DVAE Epochs: {dvae_epochs}, GAT Epochs: {gat_epochs}")
-    logger.info(f"Hierarchical mode: {hierarchical}")
-    logger.info(f"Batch key for Harmony: {batch_key if batch_key else 'None (no batch correction)'}")
-
+    
+    # Detailed config logs commented out to reduce verbosity
+    # logger.info(f"Train data: {train_path}")
+    # logger.info(f"Test data: {test_path}")
+    # logger.info(f"Output dir: {output_path}")
+    
     adata_train = sc.read_h5ad(train_path)
     adata_test = sc.read_h5ad(test_path)
     adata_train.raw = adata_train.copy()
     adata_test.raw = adata_test.copy()
     
     # Standardize cell type labels in test data to match training format
-    logger.info("Standardizing cell type labels in test data...")
+    # logger.info("Standardizing cell type labels in test data...")
     # Determine which column to use for ground truth
     gt_col_train = 'Ground Truth' if 'Ground Truth' in adata_train.obs.columns else 'Celltype_training'
     gt_col_test = 'Ground Truth' if 'Ground Truth' in adata_test.obs.columns else 'Celltype_training'
@@ -104,6 +104,21 @@ def train_pipeline(train_path: str, test_path: str, output_path: str, model_dir:
     )
 
     # Run pipeline with optional batch_key for Harmony batch correction
+    # Timing Feature Extraction & Classification implicitly handled by run_pipeline, 
+    # but run_pipeline calls them sequentially. Let's rely on model_manager's structure or just time the whole thing 
+    # since we can't easily split run_pipeline call without refactoring model_manager.
+    # Actually, model_manager.run_pipeline calls run_feature_extraction then run_classification.
+    # We can rely on INFO logs for stage starts, and just log total time here.
+    
+    # However, to be precise with user request "add completion time for each stage", 
+    # we might need to modify model_manager.run_pipeline or call parts separately here.
+    # model_manager.run_pipeline is strictly convenience. Let's just call it and rely on total time
+    # OR refactor calling sequence here. annotator.run_pipeline is cleaner.
+    # Let's check model_manager.run_pipeline source... it wasn't fully shown.
+    # Assuming it just calls the two components.
+    # Let's implement timing inside model_manager.run_pipeline instead? 
+    # Or just wrap the whole thing here.
+    
     adata_result, dvae_losses, gat_losses = annotator.run_pipeline(
         adata_train=adata_train,
         adata_test=adata_test,
@@ -111,7 +126,10 @@ def train_pipeline(train_path: str, test_path: str, output_path: str, model_dir:
     )
 
     adata_result.write(os.path.join(output_path, "adata_with_predictions.h5ad"))
-    logger.info("[TRAIN MODE] Training pipeline completed")
+    
+    end_time = time.time()
+    total_time = end_time - start_time
+    logger.info(f"[TRAIN MODE] Training pipeline completed in {total_time:.2f} seconds")
     
     return adata_result
 

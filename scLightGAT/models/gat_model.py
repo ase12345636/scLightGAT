@@ -123,8 +123,8 @@ class GATModel(torch.nn.Module):
             # Memory cleanup
             torch.cuda.empty_cache() 
             
-            if (epoch + 1) % 10 == 0:
-                logger.info(f'Epoch [{epoch+1}/{num_epochs}], Loss: {loss.item():.4f}')
+            # Memory cleanup
+            torch.cuda.empty_cache()
         
         return losses
 
