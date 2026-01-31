@@ -4,3 +4,8 @@ docker/
 scLightGAT.backup/
 scLightGAT_data/
 thesis.exps_results/
+__pycache__/
+*.pyc
+*.log
+*.png
+results/
