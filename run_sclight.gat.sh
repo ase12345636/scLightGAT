@@ -202,7 +202,8 @@ run_training() {
     fi
     
     # Add PYTHONPATH so scLightGAT module can be found
-    export PYTHONPATH="${SCLIGHTGAT_DIR}:${PYTHONPATH}"
+    # We add PROJECT_ROOT because scLightGAT package is inside PROJECT_ROOT
+    export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH}"
     
     python3 << PYTHON_SCRIPT
 import os
@@ -211,7 +212,7 @@ import scanpy as sc
 import matplotlib.pyplot as plt
 
 # Change to scLightGAT directory for imports
-sys.path.insert(0, '${SCLIGHTGAT_DIR}')
+sys.path.insert(0, '${PROJECT_ROOT}')
 from scLightGAT.pipeline import train_pipeline
 
 # Run training pipeline (outputs will be saved to current directory = output_path)
@@ -430,6 +431,12 @@ main() {
                 print_usage
                 exit 1
             fi
+        fi
+        
+        # Auto-detect batch key if not provided
+        if [ -z "${BATCH_KEY}" ] && [ -n "${BATCH_KEYS[$DATASET_NAME]}" ]; then
+             BATCH_KEY="${BATCH_KEYS[$DATASET_NAME]}"
+             echo "Auto-detected batch key for ${DATASET_NAME}: ${BATCH_KEY}"
         fi
         
         run_training "${DATASET_NAME}" "${test_path}"
