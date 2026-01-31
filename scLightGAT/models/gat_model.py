@@ -11,83 +11,61 @@ from torch.cuda.amp import autocast, GradScaler
 from scLightGAT.logger_config import setup_logger
 logger = setup_logger(__name__)
 
-# class GATModel(torch.nn.Module):
-#     """
-#     Graph Attention Network model for refining cell type predictions.
-#     Incorporates layer normalization, residual connections, and mixed precision training.
-#     """
-#     def __init__(self, in_channels, out_channels):
-#         """
-    #     Initialize GAT model with dual attention layers.
-        
-    #     Args:
-    #         in_channels: Number of input feature dimensions
-    #         out_channels: Number of output classes
-    #     """
-    #     super(GATModel, self).__init__()
-        
-    #     # First GAT layer with multi-head attention
-    #     self.conv1 = GATConv(in_channels, 256, heads=16, dropout=0.5)
-    #     self.norm1 = torch.nn.LayerNorm(128 * 8)
-        
-    #     # Second GAT layer with single-head attention
-    #     self.conv2 = GATConv(128 * 8, out_channels, heads=1, concat=False, dropout=0.5)
-    #     self.norm2 = torch.nn.LayerNorm(out_channels)
-        
-    #     # Residual connection to preserve input information
-    #     self.residual = torch.nn.Linear(in_channels, out_channels) if in_channels != out_channels else torch.nn.Identity()
-        
-    # def forward(self, data):
-    #     """
-    #     Forward pass through GAT model.
-        
-    #     Args:
-    #         data: PyTorch Geometric Data object containing node features and edge indices
-            
-    #     Returns:
-    #         Tuple of (log_softmax outputs, attention weights for layer 1, attention weights for layer 2)
-    #     """
-    #     x, edge_index = data.x, data.edge_index
-    #     identity = x  # Store original features for residual connection
-        
-    #     # First GAT layer
-    #     x = F.dropout(x, p=0.5, training=self.training)
-    #     x, attention_weights1 = self.conv1(x, edge_index, return_attention_weights=True)
-    #     x = self.norm1(x)  # Layer normalization for training stability
-    #     x = F.elu(x)
-        
-    #     # Second GAT layer
-    #     x = F.dropout(x, p=0.5, training=self.training)
-    #     x, attention_weights2 = self.conv2(x, edge_index, return_attention_weights=True)
-    #     x = self.norm2(x)
-        
-    #     # Add residual connection
-    #     x = x + self.residual(identity)
-        
-    #     return F.log_softmax(x, dim=1), attention_weights1[1], attention_weights2[1]
 class GATModel(torch.nn.Module):
+    """
+    Graph Attention Network model for refining cell type predictions.
+    Incorporates layer normalization, residual connections, and mixed precision training.
+    """
     def __init__(self, in_channels, out_channels):
+        """
+        Initialize GAT model with dual attention layers.
+        
+        Args:
+            in_channels: Number of input feature dimensions
+            out_channels: Number of output classes
+        """
         super(GATModel, self).__init__()
-        # Layer-1: multi-head attention; output dim = 256 * 16 (concat=True by default)
-        self.conv1 = GATConv(in_channels, 256, heads=16, dropout=0.5)
-        # Layer-2: single-head output; concat=False keeps output dim = out_channels
-        self.conv2 = GATConv(256 * 16, out_channels, heads=1, concat=False, dropout=0.5)
-
+        
+        # First GAT layer with multi-head attention
+        self.conv1 = GATConv(in_channels, 128, heads=8, dropout=0.5)
+        self.norm1 = torch.nn.LayerNorm(128 * 8)
+        
+        # Second GAT layer with single-head attention
+        self.conv2 = GATConv(128 * 8, out_channels, heads=1, concat=False, dropout=0.5)
+        self.norm2 = torch.nn.LayerNorm(out_channels)
+        
+        # Residual connection to preserve input information
+        self.residual = torch.nn.Linear(in_channels, out_channels) if in_channels != out_channels else torch.nn.Identity()
+        
     def forward(self, data):
+        """
+        Forward pass through GAT model.
+        
+        Args:
+            data: PyTorch Geometric Data object containing node features and edge indices
+            
+        Returns:
+            Tuple of (log_softmax outputs, attention weights for layer 1, attention weights for layer 2)
+        """
         x, edge_index = data.x, data.edge_index
-
-        # Dropout before attention is common to regularize features
+        identity = x  # Store original features for residual connection
+        
+        # First GAT layer
         x = F.dropout(x, p=0.5, training=self.training)
-        # Return attention weights to visualize later
-        x, attn_w1 = self.conv1(x, edge_index, return_attention_weights=True)
+        x, attention_weights1 = self.conv1(x, edge_index, return_attention_weights=True)
+        x = self.norm1(x)  # Layer normalization for training stability
         x = F.elu(x)
-
+        
+        # Second GAT layer
         x = F.dropout(x, p=0.5, training=self.training)
-        x, attn_w2 = self.conv2(x, edge_index, return_attention_weights=True)
-        x = F.elu(x)
+        x, attention_weights2 = self.conv2(x, edge_index, return_attention_weights=True)
+        x = self.norm2(x)
+        
+        # Add residual connection
+        x = x + self.residual(identity)
+        
+        return F.log_softmax(x, dim=1), attention_weights1[1], attention_weights2[1]
 
-        # IMPORTANT: return raw logits (no log_softmax); CrossEntropyLoss expects logits
-        return x, attn_w1[1], attn_w2[1]
     def train_model(self, data, lightgbm_preds, num_epochs=100, lr=0.0005, weight_decay=1e-5):
         """
         Train the GAT model using mixed precision and progress tracking.
@@ -150,37 +128,45 @@ class GATModel(torch.nn.Module):
         
         return losses
 
-    def evaluate(self, data, lightgbm_preds, lightgbm_classes=None):
+    def evaluate(self, data, lightgbm_preds, lightgbm_classes):
         """
-        Lightweight evaluation for ablation: compute only accuracy against teacher labels.
-        This intentionally skips classification_report / confusion_matrix to avoid
-        label-set mismatches between train/test (e.g., missing classes in a batch).
-
+        Evaluate GAT model performance.
+        
         Args:
             data: PyTorch Geometric Data object
-            lightgbm_preds: Encoded teacher labels from LightGBM (np.ndarray or list of ints)
-            lightgbm_classes: (optional) full class name list; unused here
-
+            lightgbm_preds: Initial predictions from LightGBM to compare against
+            lightgbm_classes: Class names for the classification report
+            
         Returns:
-            Tuple of (predictions_encoded, accuracy_float)
+            Tuple of (predictions, accuracy)
         """
-        import numpy as np
-        from sklearn.metrics import accuracy_score
-        import torch
-        from torch.cuda.amp import autocast
-
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.eval()
         with torch.no_grad():
+            # Use mixed precision for inference
             with autocast():
                 out, _, _ = self(data.to(device))
                 _, pred = out.max(dim=1)
+            
+        pred_np = pred.cpu().numpy()
+        lightgbm_preds_np = np.array(lightgbm_preds).astype(np.int64)
 
-        pred_np = pred.detach().cpu().numpy().astype(np.int64)
-        y_true = np.asarray(lightgbm_preds, dtype=np.int64)
+        accuracy = accuracy_score(lightgbm_preds_np, pred_np)
+        
+        # Get unique labels that actually appear in predictions or ground truth
+        unique_labels = sorted(set(lightgbm_preds_np) | set(pred_np))
+        # Map to class names for those that exist
+        target_names = [lightgbm_classes[i] for i in unique_labels if i < len(lightgbm_classes)]
+        
+        report = classification_report(
+            lightgbm_preds_np, pred_np, 
+            labels=unique_labels[:len(target_names)],
+            target_names=target_names,
+            zero_division=0
+        )
 
-        # Accuracy only
-        acc = accuracy_score(y_true, pred_np)
-        logger.info(f"Accuracy (GAT vs LightGBM labels): {acc:.4f}")
+        logger.info(f"Accuracy: {accuracy:.4f}")
+        logger.info("Classification Report:")
+        logger.info(report)
 
-        return pred_np, acc
+        return pred_np, accuracy

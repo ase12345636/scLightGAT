@@ -326,36 +326,29 @@ class CellTypeAnnotator:
                 encoded.append(z.cpu().numpy())
         return np.concatenate(encoded, axis=0)
     
-    # --- Patch inside CellTypeAnnotator in model_manager.py ---
-
     def transform_adata(self, adata: AnnData, check_type: str) -> pd.DataFrame:
         """
-        Transform AnnData object to DataFrame with (optional) cell type annotations.
-        If `check_type` is not available (e.g., test set without ground-truth),
-        we fall back to GAT_pred (if exists) or fill NA.
+        Transform AnnData object to DataFrame with cell type annotations.
+        
+        Args:
+            adata: AnnData object to transform
+            check_type: Column name in adata.obs to use as cell type
+            
+        Returns:
+            DataFrame with features and cell type
         """
         logger.info(f"Transforming AnnData for {check_type}")
-
-        # Ensure log-transformed layer
+        
+        # Ensure log-transformed data is available
         if "log_transformed" not in adata.layers:
             adata.layers["log_transformed"] = np.log1p(adata.X)
-
-        # Build feature matrix from the chosen layer
+            
+        # Create DataFrame from log-transformed data
         matrix = adata.to_df(layer="log_transformed")
-
-        # Robustly get a label column for downstream APIs which expect 'Cell_type'
-        if check_type in adata.obs:
-            cell_type_series = adata.obs[check_type].astype(str)
-        elif "GAT_pred" in adata.obs:
-            # fall back to current broad prediction if available
-            cell_type_series = adata.obs["GAT_pred"].astype(str)
-        else:
-            # no labels available; create NA column
-            cell_type_series = pd.Series(index=adata.obs.index, data=np.nan, dtype=object)
-
-        matrix["Cell_type"] = cell_type_series
+        adata_pd = pd.DataFrame(adata.obs)
+        matrix["Cell_type"] = adata_pd[check_type]
+        
         return matrix
-
     
     def prepare_gat_data(self, adata: AnnData, lightgbm_probs: np.ndarray) -> Data:
         """
@@ -373,92 +366,46 @@ class CellTypeAnnotator:
         # Ensure log-transformed data is available
         if "log_transformed" not in adata.layers:
             adata.layers["log_transformed"] = np.log1p(adata.X)
-            # --- Node features ---
-        # 1) Harmony / PCA embeddings (optional but preferred)
-        emb = None
-        for k in ["X_pca_harmony", "X_harmony", "X_pca"]:
-            if k in adata.obsm:
-                emb = np.asarray(adata.obsm[k], dtype=float)
-                break
-        if emb is None:
-            logger.warning("No Harmony/PCA embeddings found; proceeding without them.")
-            emb = np.zeros((adata.n_obs, 0), dtype=float)
-
-        # 2) DGE (log) as M_DEG
+            
+        # Extract gene expression matrix
         matrix = adata.to_df(layer="log_transformed")
-        dge = matrix.values.astype(float)
-
-        # 3) UMAP coordinates
-        if "X_umap" in adata.obsm:
-            umap = np.asarray(adata.obsm['X_umap'], dtype=float)
-        else:
-            logger.warning("X_umap not found; computing neighbors/umap for GAT features.")
-            sc.pp.neighbors(adata)
-            sc.tl.umap(adata)
-            umap = np.asarray(adata.obsm['X_umap'], dtype=float)
-
-        # 4) Leiden labels (as a single numeric column)
-        if "leiden" not in adata.obs:
-            logger.warning("leiden not found; computing Leiden with default res=1.0")
-            sc.tl.leiden(adata, resolution=1.0)
-        leiden = adata.obs['leiden'].astype(int).to_numpy()[:, None].astype(float)
-
-        # 5) LightGBM probabilities (N x C)
-        probs = np.asarray(lightgbm_probs, dtype=float)
-
-        # Concatenate feature blocks: [Harmony | DGE | UMAP | Leiden | p_LGBM]
-        node_features = np.hstack([emb, dge, umap, leiden, probs])
-
-        # --- Graph edges from connectivities (COO) ---
-        conn = adata.obsp['connectivities'].tocoo()
-        row, col = conn.row, conn.col
-
-        # Make edges bidirectional (important for GAT message passing on undirected graphs)
-        edge_index = np.vstack([np.concatenate([row, col]), np.concatenate([col, row])])
-        edge_index = torch.tensor(edge_index, dtype=torch.long)
-
-        # Pack to PyG
-        x = torch.tensor(node_features, dtype=torch.float32)
+        adata_pd = pd.DataFrame(adata.obs)
+        # Use Ground Truth if available, otherwise Celltype_training
+        celltype_col = 'Ground Truth' if 'Ground Truth' in adata_pd.columns else 'Celltype_training'
+        matrix["Cell_type"] = adata_pd[celltype_col]
+        prominent_gene_matrix = matrix.drop(["Cell_type"], axis=1)
+        combine_features = prominent_gene_matrix.values.astype(float)
+        
+        # Get UMAP coordinates and Leiden labels
+        umap_coords = adata.obsm['X_umap'].astype(float)
+        leiden_labels = adata.obs['leiden'].astype(int).values.astype(float)
+        
+        # Combine features for node attributes
+        leiden_labels_matrix = np.expand_dims(leiden_labels, axis=1)
+        node_features = np.hstack([umap_coords, combine_features, leiden_labels_matrix, lightgbm_probs])
+        
+        # Extract graph structure from neighbor graph
+        connectivities = adata.obsp['connectivities'].tocoo()
+        distances = adata.obsp['distances'].tocoo()
+        distance_dict = {(row, col): dist_weight for row, col, dist_weight in zip(distances.row, distances.col, distances.data)}
+        
+        # Create networkx graph
+        G = nx.Graph()
+        for i in range(node_features.shape[0]):
+            G.add_node(i, features=node_features[i])
+        
+        # Add edges with weights
+        for row, col, conn_weight in zip(connectivities.row, connectivities.col, connectivities.data):
+            dist_weight = distance_dict.get((row, col), None)
+            if dist_weight is not None:
+                G.add_edge(row, col, connect_weight=conn_weight, dist_weight=dist_weight)
+        
+        # Convert to PyTorch Geometric Data
+        edge_index = torch.tensor(np.array(list(G.edges)).T, dtype=torch.long)
+        x = torch.tensor(node_features, dtype=torch.float)
         data = Data(x=x, edge_index=edge_index)
-
+        
         return data
-        # # Extract gene expression matrix
-        # matrix = adata.to_df(layer="log_transformed")
-        # adata_pd = pd.DataFrame(adata.obs)
-        # matrix["Cell_type"] = adata_pd['Celltype_training']
-        # prominent_gene_matrix = matrix.drop(["Cell_type"], axis=1)
-        # combine_features = prominent_gene_matrix.values.astype(float)
-        
-        # # Get UMAP coordinates and Leiden labels
-        # umap_coords = adata.obsm['X_umap'].astype(float)
-        # leiden_labels = adata.obs['leiden'].astype(int).values.astype(float)
-        
-        # # Combine features for node attributes
-        # leiden_labels_matrix = np.expand_dims(leiden_labels, axis=1)
-        # node_features = np.hstack([umap_coords, combine_features, leiden_labels_matrix, lightgbm_probs])
-        
-        # # Extract graph structure from neighbor graph
-        # connectivities = adata.obsp['connectivities'].tocoo()
-        # distances = adata.obsp['distances'].tocoo()
-        # distance_dict = {(row, col): dist_weight for row, col, dist_weight in zip(distances.row, distances.col, distances.data)}
-        
-        # # Create networkx graph
-        # G = nx.Graph()
-        # for i in range(node_features.shape[0]):
-        #     G.add_node(i, features=node_features[i])
-        
-        # # Add edges with weights
-        # for row, col, conn_weight in zip(connectivities.row, connectivities.col, connectivities.data):
-        #     dist_weight = distance_dict.get((row, col), None)
-        #     if dist_weight is not None:
-        #         G.add_edge(row, col, connect_weight=conn_weight, dist_weight=dist_weight)
-        
-        # # Convert to PyTorch Geometric Data
-        # edge_index = torch.tensor(np.array(list(G.edges)).T, dtype=torch.long)
-        # x = torch.tensor(node_features, dtype=torch.float)
-        # data = Data(x=x, edge_index=edge_index)
-        
-        # return data
     
     def init_gat(self, in_channels: int, out_channels: int):
         """
@@ -514,6 +461,156 @@ class CellTypeAnnotator:
             raise ValueError("GAT model not initialized. Call init_gat first.")
             
         return self.gat.evaluate(data, lightgbm_preds, lightgbm_classes)
+    
+    # =========================================================================
+    # Model Saving and Loading for Inference-Only Mode
+    # =========================================================================
+    
+    def save_models(self, model_dir: str, encoder=None, feature_names=None, common_hvgs=None):
+        """
+        Save all trained models to disk for later inference.
+        
+        Args:
+            model_dir: Directory to save models
+            encoder: Label encoder for class mapping
+            feature_names: List of feature names used in training
+            common_hvgs: List of common highly variable genes
+        """
+        import os
+        import joblib
+        
+        os.makedirs(model_dir, exist_ok=True)
+        
+        # Save LightGBM model
+        if self.lightgbm.model is not None:
+            lightgbm_path = os.path.join(model_dir, 'lightgbm_model.pkl')
+            self.lightgbm.save_model(lightgbm_path)
+            logger.info(f"LightGBM model saved to {lightgbm_path}")
+        
+        # Save DVAE model
+        if self.dvae is not None:
+            dvae_path = os.path.join(model_dir, 'dvae_model.pt')
+            torch.save({
+                'model_state_dict': self.dvae.state_dict(),
+                'input_dim': self.input_dim,
+                'dvae_params': self.dvae_params
+            }, dvae_path)
+            logger.info(f"DVAE model saved to {dvae_path}")
+        
+        # Save GAT model
+        if self.gat is not None:
+            gat_path = os.path.join(model_dir, 'gat_model.pt')
+            torch.save({
+                'model_state_dict': self.gat.model.state_dict(),
+                'in_channels': self.gat.in_channels,
+                'out_channels': self.gat.out_channels
+            }, gat_path)
+            logger.info(f"GAT model saved to {gat_path}")
+        
+        # Save encoder
+        if encoder is not None:
+            encoder_path = os.path.join(model_dir, 'encoder.pkl')
+            joblib.dump(encoder, encoder_path)
+            logger.info(f"Encoder saved to {encoder_path}")
+        
+        # Save feature names and HVGs
+        metadata = {
+            'feature_names': feature_names,
+            'common_hvgs': common_hvgs,
+            'use_dvae': self.use_dvae,
+            'use_hvg': self.use_hvg,
+            'gat_epochs': self.gat_epochs,
+            'dvae_params': self.dvae_params
+        }
+        metadata_path = os.path.join(model_dir, 'model_metadata.pkl')
+        joblib.dump(metadata, metadata_path)
+        logger.info(f"Model metadata saved to {metadata_path}")
+        
+        logger.info(f"All models saved to {model_dir}")
+    
+    def load_models(self, model_dir: str):
+        """
+        Load trained models from disk for inference-only mode.
+        
+        Args:
+            model_dir: Directory containing saved models
+            
+        Returns:
+            Tuple of (encoder, metadata)
+        """
+        import os
+        import joblib
+        
+        if not os.path.exists(model_dir):
+            raise FileNotFoundError(f"Model directory not found: {model_dir}")
+        
+        # Load LightGBM model
+        lightgbm_path = os.path.join(model_dir, 'lightgbm_model.pkl')
+        if os.path.exists(lightgbm_path):
+            self.lightgbm.load_model(lightgbm_path)
+            logger.info(f"LightGBM model loaded from {lightgbm_path}")
+        
+        # Load DVAE model
+        dvae_path = os.path.join(model_dir, 'dvae_model.pt')
+        if os.path.exists(dvae_path):
+            checkpoint = torch.load(dvae_path, map_location=self.device)
+            self.input_dim = checkpoint['input_dim']
+            self.dvae_params = checkpoint['dvae_params']
+            self.initialize_dvae(self.input_dim)
+            self.dvae.load_state_dict(checkpoint['model_state_dict'])
+            self.dvae.to(self.device)
+            self.dvae.eval()
+            logger.info(f"DVAE model loaded from {dvae_path}")
+        
+        # Load GAT model
+        gat_path = os.path.join(model_dir, 'gat_model.pt')
+        if os.path.exists(gat_path):
+            checkpoint = torch.load(gat_path, map_location=self.device)
+            self.init_gat(checkpoint['in_channels'], checkpoint['out_channels'])
+            self.gat.model.load_state_dict(checkpoint['model_state_dict'])
+            self.gat.model.to(self.device)
+            self.gat.model.eval()
+            logger.info(f"GAT model loaded from {gat_path}")
+        
+        # Load encoder
+        encoder = None
+        encoder_path = os.path.join(model_dir, 'encoder.pkl')
+        if os.path.exists(encoder_path):
+            encoder = joblib.load(encoder_path)
+            logger.info(f"Encoder loaded from {encoder_path}")
+        
+        # Load metadata
+        metadata = None
+        metadata_path = os.path.join(model_dir, 'model_metadata.pkl')
+        if os.path.exists(metadata_path):
+            metadata = joblib.load(metadata_path)
+            logger.info(f"Metadata loaded from {metadata_path}")
+        
+        logger.info(f"All models loaded from {model_dir}")
+        return encoder, metadata
+    
+    def has_trained_models(self, model_dir: str) -> bool:
+        """
+        Check if trained models exist in the given directory.
+        
+        Args:
+            model_dir: Directory to check for models
+            
+        Returns:
+            True if all required models exist
+        """
+        import os
+        
+        required_files = ['lightgbm_model.pkl', 'encoder.pkl', 'model_metadata.pkl']
+        
+        if not os.path.exists(model_dir):
+            return False
+        
+        for f in required_files:
+            if not os.path.exists(os.path.join(model_dir, f)):
+                return False
+        
+        return True
     
     def run_feature_extraction(self, adata_train: AnnData, adata_test: AnnData) -> Dict[str, Any]:
         """
@@ -614,38 +711,95 @@ class CellTypeAnnotator:
     def run_classification(self, feature_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Run classification pipeline.
+        
+        Args:
+            feature_data: Dictionary with features from run_feature_extraction
+            
+        Returns:
+            Dictionary with classification results
         """
         logger.info("Starting classification")
-
+        
+        # Extract data
         X_train = feature_data['X_train']
         y_train = feature_data['y_train']
         X_test = feature_data['X_test']
         encoder = feature_data['encoder']
         adata_test_dge = feature_data['adata_test_dge']
-
-        # Train LightGBM
+        
+        # Train LightGBM (this logs training set validation accuracy)
         self.train_lightgbm(X_train, y_train, class_names=encoder.classes_)
-
-        # Generate predictions
+        
+        # Generate predictions on actual independent test set
         lightgbm_preds_encoded = self.predict_lightgbm(X_test)
         lightgbm_probs = self.predict_proba_lightgbm(X_test)
         lightgbm_preds = encoder.inverse_transform(lightgbm_preds_encoded)
-
-        # ---- FIX: avoid Pandas StringDtype; use plain object/str then optional category ----
-        # Store predictions in AnnData (object-based strings; h5ad-safe)
-        pred_series = pd.Series(lightgbm_preds, index=adata_test_dge.obs.index, dtype=object)
-        # Optional: compress as category with object-based categories
-        pred_series = pred_series.astype(str).astype('category')
-        adata_test_dge.obs['LightGBM_prediction'] = pred_series
-
-        # Probabilities (numpy array) are fine
+        
+        # Store predictions in AnnData
+        adata_test_dge.obs['scLightGAT_rawpred'] = lightgbm_preds
         adata_test_dge.obsm['LightGBM_probs'] = lightgbm_probs
-
-        # Unify a working "final" column for downstream; keep as category/object, not pandas 'string'
-        adata_test_dge.obs['scLightGAT_prediction'] = adata_test_dge.obs['LightGBM_prediction'].astype(str).astype('category')
-
-        logger.info("LightGBM classification completed")
-
+        
+        # Calculate and log test set accuracy (independent test set)
+        # Check for Ground Truth column first, then Celltype_training for backward compatibility
+        gt_col = 'Ground Truth' if 'Ground Truth' in adata_test_dge.obs.columns else ('Celltype_training' if 'Celltype_training' in adata_test_dge.obs.columns else None)
+        if gt_col is not None:
+            from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+            import matplotlib.pyplot as plt
+            import seaborn as sns
+            
+            y_true = adata_test_dge.obs[gt_col].values
+            y_pred = lightgbm_preds
+            
+            test_accuracy = accuracy_score(y_true, y_pred)
+            logger.info(f"[INDEPENDENT TEST SET] LightGBM Accuracy: {test_accuracy:.4f}")
+            
+            report = classification_report(y_true, y_pred, zero_division=0)
+            logger.info(f"[INDEPENDENT TEST SET] Classification Report:\n{report}")
+            
+            # Plot confusion matrix for independent test set
+            # Only include classes that have at least one ground truth sample
+            gt_labels = sorted([l for l in set(y_true) if sum(y_true == l) > 0])
+            pred_labels = sorted(set(y_pred))
+            # Use labels that exist in ground truth (filter out GT=0)
+            labels = sorted(set(gt_labels) | (set(pred_labels) & set(gt_labels)))
+            if not labels:
+                labels = sorted(set(y_true) | set(y_pred))
+            
+            conf_matrix = confusion_matrix(y_true, y_pred, labels=labels)
+            
+            # Create row-normalized version for better color scaling
+            row_sums = conf_matrix.sum(axis=1, keepdims=True)
+            row_sums[row_sums == 0] = 1  # Avoid division by zero
+            conf_matrix_normalized = conf_matrix / row_sums
+            
+            # Calculate figure size based on number of classes
+            n_labels = len(labels)
+            fig_size = max(10, n_labels * 0.8)
+            plt.figure(figsize=(fig_size, fig_size * 0.9))
+            
+            # Use row-normalized colors but show actual counts
+            sns.heatmap(conf_matrix, 
+                        annot=True,
+                        fmt='g',
+                        cmap="Blues",
+                        xticklabels=labels,
+                        yticklabels=labels,
+                        vmin=0,
+                        vmax=np.max(conf_matrix),  # Auto-scale to max count
+                        cbar_kws={'label': 'Count'})
+            
+            plt.xticks(rotation=45, ha='right', fontsize=9)
+            plt.yticks(rotation=0, ha='right', fontsize=9)
+            plt.xlabel('LightGBM Prediction', fontsize=11, fontweight="bold")
+            plt.ylabel('Ground Truth', fontsize=11, fontweight="bold")
+            plt.title('LightGBM Confusion Matrix (Independent Test Set)', fontsize=13, fontweight="bold")
+            plt.tight_layout()
+            plt.savefig('lightgbm_test_confusion_matrix.png', dpi=300, bbox_inches='tight')
+            plt.close()
+            logger.info("Independent test set confusion matrix saved to lightgbm_test_confusion_matrix.png")
+        
+        logger.info("Classification completed")
+        
         return {
             'adata_test_dge': adata_test_dge,
             'lightgbm_preds': lightgbm_preds,
@@ -655,59 +809,52 @@ class CellTypeAnnotator:
         }
     
     def run_refinement(self, classification_data: Dict[str, Any], 
-                    batch_key: Optional[str] = None) -> Tuple[AnnData, List[float]]:
+                      batch_key: Optional[str] = None) -> Tuple[AnnData, List[float]]:
         """
         Run GAT refinement pipeline.
-
+        
         Args:
             classification_data: Dictionary with results from run_classification
             batch_key: Optional batch key for UMAP generation
-
+            
         Returns:
             Tuple of (refined AnnData, GAT losses)
         """
         logger.info("Starting refinement with GAT")
-
-        # --- Unpack data from stage-1 (LightGBM) ---
+        
+        # Extract data
         adata_test_dge = classification_data['adata_test_dge']
-        lightgbm_preds = classification_data['lightgbm_preds_encoded']   # encoded labels in [0..C-1]
-        lightgbm_probs = classification_data['lightgbm_probs']           # N x C
-        encoder = classification_data['encoder']                         # LabelEncoder fitted on TRAIN classes
-
-        # --- Ensure neighbors/UMAP exist for graph construction ---
+        lightgbm_preds = classification_data['lightgbm_preds_encoded']
+        lightgbm_probs = classification_data['lightgbm_probs']
+        encoder = classification_data['encoder']
+        
+        # Prepare visualization
         adata_test_dge = visualization_process(adata_test_dge, res=1.0, batch_key=batch_key)
-        print("Neighbors rep used:", adata_test_dge.uns['neighbors']['params']['use_rep'])
-        print("Has X_pca_harmony:", 'X_pca_harmony' in adata_test_dge.obsm)
-        # --- Build PyG Data (node features include p_LGBM) ---
+        
+        # Prepare GAT data
         gat_data = self.prepare_gat_data(adata_test_dge, lightgbm_probs)
-
-        # --- ALWAYS use the full train class space (avoid sparse-id issue) ---
-        n_classes = len(encoder.classes_)
+        
+        # Get all classes from encoder (not just unique in predictions)
+        if encoder is not None:
+            all_classes = encoder.classes_
+            n_classes = len(all_classes)
+            logger.info(f"Total classes from encoder: {n_classes}")
+        else:
+            raise ValueError("Encoder is required for GAT refinement")
+        
+        # Initialize and train GAT with correct number of classes
         self.init_gat(in_channels=gat_data.x.shape[1], out_channels=n_classes)
-
-        # --- Safety checks to prevent CUDA device-side assert ---
-        y_enc = np.asarray(lightgbm_preds, dtype=np.int64)
-        assert y_enc.min() >= 0, "Encoded labels must be non-negative."
-        assert y_enc.max() < n_classes, f"Label {y_enc.max()} out of range for {n_classes} classes."
-        assert lightgbm_probs.shape[1] == n_classes, \
-            f"Probability dim {lightgbm_probs.shape[1]} != number of classes {n_classes}"
-
-        # --- Train GAT on encoded labels with full class space ---
-        losses = self.train_gat(gat_data, y_enc, num_epochs=self.gat_epochs)
-
-        # --- Evaluate and decode predictions back to class names ---
-        pred_np, accuracy = self.evaluate_gat(gat_data, y_enc, encoder.classes_)
-        gat_labels = encoder.inverse_transform(pred_np)
-
-        # Store refined predictions as string (avoid pandas categorical mismatch later)
-        gat_series = pd.Series(gat_labels, index=adata_test_dge.obs.index, dtype=object)
-        gat_series = gat_series.astype(str).astype('category')
-        adata_test_dge.obs['GAT_pred'] = gat_series
-        adata_test_dge.obs['scLightGAT_prediction'] = adata_test_dge.obs['GAT_pred'].astype(str).astype('category')
-
-        logger.info(f"GAT Refinement completed with accuracy: {accuracy:.4f}")
+        losses = self.train_gat(gat_data, lightgbm_preds, num_epochs=self.gat_epochs)
+        
+        # Evaluate and get refined predictions
+        pred_np, accuracy = self.evaluate_gat(gat_data, lightgbm_preds, all_classes)
+        
+        # Store refined predictions
+        adata_test_dge.obs['scLightGAT_pred'] = all_classes[pred_np]
+        
+        logger.info(f"Refinement completed with accuracy: {accuracy:.4f}")
+        
         return adata_test_dge, losses
-
     
     def run_subtype_prediction(self, adata_train: AnnData, 
                               adata_refined: AnnData, 
@@ -733,14 +880,14 @@ class CellTypeAnnotator:
         
         # Initialize results with broad cell types
         adata_test_sub = adata_refined.copy()
-        adata_test_sub.obs['GAT_pred'] = adata_test_sub.obs['GAT_pred'].astype(str)
+        adata_test_sub.obs['scLightGAT_pred'] = adata_test_sub.obs['scLightGAT_pred'].astype(str)
         adata_test_sub.obs['subtype_pred_lightgbm'] = pd.Series(
-            adata_test_sub.obs['GAT_pred'].values,
+            adata_test_sub.obs['scLightGAT_pred'].values,
             index=adata_test_sub.obs.index,
             dtype=str
         )
-        adata_test_sub.obs['scLightGAT_prediction(subtype)'] = pd.Series(
-            adata_test_sub.obs['GAT_pred'].values,
+        adata_test_sub.obs['subtype_pred_final'] = pd.Series(
+            adata_test_sub.obs['scLightGAT_pred'].values,
             index=adata_test_sub.obs.index,
             dtype=str
         )
@@ -845,7 +992,7 @@ class CellTypeAnnotator:
                 # Update predictions
                 mask_indices = adata_test_sub.obs.index[combined_mask]
                 final_predictions = encoder.inverse_transform(final_preds)
-                adata_test_sub.obs.loc[mask_indices, 'scLightGAT_prediction(subtype)'] = final_predictions
+                adata_test_sub.obs.loc[mask_indices, 'subtype_pred_final'] = final_predictions
                 
                 # Update prediction paths
                 for idx, pred in zip(mask_indices, final_predictions):
@@ -859,17 +1006,17 @@ class CellTypeAnnotator:
             if np.any(no_subtype_mask):
                 adata_test_sub.obs.loc[no_subtype_mask, 'prediction_path'] = (
                     "Broad (no subtype): " + 
-                    adata_test_sub.obs.loc[no_subtype_mask, 'GAT_pred']
+                    adata_test_sub.obs.loc[no_subtype_mask, 'scLightGAT_pred']
                 )
         else:
             # Use LightGBM predictions directly
-            adata_test_sub.obs['scLightGAT_prediction(subtype)'] = adata_test_sub.obs['subtype_pred_lightgbm']
+            adata_test_sub.obs['subtype_pred_final'] = adata_test_sub.obs['subtype_pred_lightgbm']
             
             # Update prediction paths
-            update_mask = adata_test_sub.obs['subtype_pred_lightgbm'] != adata_test_sub.obs['GAT_pred']
+            update_mask = adata_test_sub.obs['subtype_pred_lightgbm'] != adata_test_sub.obs['scLightGAT_pred']
             if update_mask.any():
                 adata_test_sub.obs.loc[update_mask, 'prediction_path'] = (
-                    "Broad: " + adata_test_sub.obs.loc[update_mask, 'GAT_pred'].astype(str) + 
+                    "Broad: " + adata_test_sub.obs.loc[update_mask, 'scLightGAT_pred'].astype(str) + 
                     " -> Final: " + adata_test_sub.obs.loc[update_mask, 'subtype_pred_lightgbm'].astype(str)
                 )
         
@@ -971,8 +1118,7 @@ class CellTypeAnnotator:
                     use_hvg: Optional[bool] = None,
                     n_hvgs: Optional[int] = None,
                     save_visualizations: bool = True,
-                    run_subtypes: Optional[bool] = None,
-                    use_gat: Optional[bool] = True) -> Tuple[AnnData, Optional[List[float]], Optional[List[float]]]:
+                    run_subtypes: Optional[bool] = None) -> Tuple[AnnData, Optional[List[float]], Optional[List[float]]]:
         """
         Run complete annotation pipeline.
         
@@ -990,7 +1136,7 @@ class CellTypeAnnotator:
         Returns:
             Tuple of (annotated data, DVAE losses, GAT losses)
         """
-        
+        # Set parameters
         current_use_dvae = use_dvae if use_dvae is not None else self.use_dvae
         run_subtypes = run_subtypes if run_subtypes is not None else self.hierarchical
         
@@ -1004,36 +1150,31 @@ class CellTypeAnnotator:
         
         logger.info("Starting complete annotation pipeline")
         
-        # 1) Feature extraction + 2) Classification
+        # Feature extraction
         feature_data = self.run_feature_extraction(
             adata_train,
             adata_test
         )
+        
+        # Classification
         classification_data = self.run_classification(feature_data)
         
+        # Refinement
+        refined_data, gat_losses = self.run_refinement(
+            classification_data,
+            batch_key=None
+        )
         
-        # 3) Refinement (conditional by use_gat)
-        if use_gat:
-            refined_data, gat_losses = self.run_refinement(classification_data, batch_key=None)
-            # unify final prediction column for downstream evaluation / export
-            final_data = refined_data
-            pred_col = "GAT_pred"
-        else:
-            # if GAT disabled, treat LightGBM as final
-            final_data = classification_data['adata_test_dge']
-            final_data.obs['GAT_pred'] = pd.Series(index=final_data.obs.index, dtype=object)
-            gat_losses = None
-            pred_col = "LightGBM_prediction"
-
-        # Create a unified final prediction column for consumers
-        final_data.obs['scLightGAT_prediction'] = final_data.obs[pred_col].astype(str).astype('category')
-
-        
-        # Optional subtype (leave as-is; it uses GAT only when enabled)
-        if run_subtypes and use_gat:
+        # Subtype prediction (optional)
+        if run_subtypes:
             final_data = self.run_subtype_prediction(
-                adata_train, final_data, balanced_counts=500, use_gat=True
+                adata_train,
+                refined_data,
+                balanced_counts=500,
+                use_gat=True
             )
+        else:
+            final_data = refined_data
         
         # Create visualizations
         if save_visualizations:
@@ -1046,7 +1187,7 @@ class CellTypeAnnotator:
                 adata_train
             )
         
-        logger.info("scLightGAT prediction completed")
+        logger.info("Annotation pipeline completed")
         return final_data, feature_data.get('dvae_losses'), gat_losses
     
     def _create_visualizations(self, annotated_data, dvae_losses, gat_losses, 
@@ -1069,16 +1210,16 @@ class CellTypeAnnotator:
         if 'X_umap' not in annotated_data.obsm:
             logger.info("Computing UMAP coordinates for visualization")
             sc.pp.neighbors(annotated_data)
-            sc.tl.umap(annotated_data, random_state=42)
+            sc.tl.umap(annotated_data)
         # Create main prediction visualization
-        if 'GAT_pred' in annotated_data.obs:
+        if 'scLightGAT_pred' in annotated_data.obs:
             logger.info("Creating UMAP visualization for cell type predictions")
             
             # Method 1: Using scanpy plotting with save parameter
             sc.settings.figdir = '.'  # Set output directory
             sc.pl.umap(
                 annotated_data,
-                color='GAT_pred',
+                color='scLightGAT_pred',
                 title="scLightGAT Cell Type Annotation",
                 frameon=False,
                 legend_loc='right margin',
@@ -1086,13 +1227,13 @@ class CellTypeAnnotator:
                 size=15,
                 alpha=0.8,
                 show=False,
-                save='_scLightGAT.png'  # This will save with 'umap_GAT_pred_scLightGAT.png' filename
+                save='_scLightGAT.png'  # This will save with 'umap_scLightGAT_pred_scLightGAT.png' filename
             )
         # Method 2: Using matplotlib directly for more control
             plt.figure(figsize=(10, 8))
             ax = sc.pl.umap(
                 annotated_data,
-                color='GAT_pred',
+                color='scLightGAT_pred',
                 title="scLightGAT Cell Type Annotation",
                 frameon=False,
                 legend_loc='right margin',

@@ -1,5 +1,5 @@
-# 修改 pipeline.py
-# 路徑: scLightGAT/pipeline.py
+# scLightGAT Pipeline
+# Path: scLightGAT/pipeline.py
 
 import argparse
 import os
@@ -11,30 +11,67 @@ from scLightGAT.visualization.visualization import plot_umap_by_label
 
 logger = setup_logger(__name__)
 
-def sanitize_obs_for_h5ad(adata: sc.AnnData) -> None:
+# Label mapping from test data formats to training data format
+LABEL_MAPPING = {
+    # Space variations in T cell labels
+    'CD4+ T cells': 'CD4+T cells',
+    'CD8+ T cells': 'CD8+T cells',
+    'CD4 T cells': 'CD4+T cells',
+    'CD8 T cells': 'CD8+T cells',
+    # Typos and variations
+    'Monocyets/Macrophages': 'Macrophages',
+    'Monocytes/Macrophages': 'Macrophages',
+    'MonocytesMacrophages': 'Macrophages',
+    # Generic T cells - map to CD4+T cells as default (most common)
+    'T cells': 'CD4+T cells',
+    # Other potential variations
+    'T/NK cells': 'NK cells',
+    'cDC': 'DC',
+}
+
+def standardize_celltype_labels(adata, label_col=None, train_labels=None):
     """
-    Coerce AnnData.obs away from pandas StringDtype to HDF5-safe dtypes.
-    - Convert pandas 'string' dtype columns to plain object/str
-    - Rebuild Categoricals so that categories are object-based (not StringArray)
+    Standardize cell type labels to match training data format.
+    
+    Args:
+        adata: AnnData object to modify
+        label_col: Column name containing cell type labels (auto-detected if None)
+        train_labels: Optional set of valid training labels for validation
+        
+    Returns:
+        Modified AnnData with standardized labels
     """
-    import pandas as pd
-    import numpy as np
+    # Auto-detect label column
+    if label_col is None:
+        if 'Ground Truth' in adata.obs.columns:
+            label_col = 'Ground Truth'
+        elif 'Celltype_training' in adata.obs.columns:
+            label_col = 'Celltype_training'
+        else:
+            logger.warning("No Ground Truth or Celltype_training column found")
+            return adata
+    
+    # Convert to string to avoid Categorical issues
+    adata.obs[label_col] = adata.obs[label_col].astype(str)
+    
+    # Apply mapping
+    mapped_count = 0
+    for old_label, new_label in LABEL_MAPPING.items():
+        mask = adata.obs[label_col] == old_label
+        if mask.any():
+            count = mask.sum()
+            adata.obs.loc[mask, label_col] = new_label
+            logger.info(f"Label mapping: '{old_label}' -> '{new_label}' ({count} cells)")
+            mapped_count += count
+    
+    if mapped_count > 0:
+        logger.info(f"Total cells with standardized labels: {mapped_count}")
+    else:
+        logger.info("No label standardization needed")
+    
+    return adata
 
-    # 1) 'string' dtype -> object
-    str_cols = list(adata.obs.select_dtypes(include=['string']).columns)
-    for c in str_cols:
-        adata.obs[c] = adata.obs[c].astype(object)
-
-    # 2) Fix categoricals whose categories might be StringArray
-    for c in adata.obs.columns:
-        if pd.api.types.is_categorical_dtype(adata.obs[c]):
-            cat = adata.obs[c].cat
-            # ensure underlying categories are plain Python strings (object)
-            new_cats = np.asarray(cat.categories.astype(object))
-            # rebuild categorical from string values with object-based categories
-            adata.obs[c] = pd.Categorical(adata.obs[c].astype(str), categories=new_cats)
-
-def train_pipeline(train_path: str, test_path: str, output_path: str, model_dir: str, train_dvae: bool, use_gat: bool, dvae_epochs: int, gat_epochs: int, hierarchical: bool = False):
+def train_pipeline(train_path: str, test_path: str, output_path: str, model_dir: str, train_dvae: bool, use_gat: bool, dvae_epochs: int, gat_epochs: int, hierarchical: bool = False, batch_key: str = None):
     logger.info("[TRAIN MODE] Starting training pipeline")
     logger.info(f"Train data: {train_path}")
     logger.info(f"Test data: {test_path}")
@@ -42,12 +79,21 @@ def train_pipeline(train_path: str, test_path: str, output_path: str, model_dir:
     logger.info(f"Model save dir: {model_dir}")
     logger.info(f"Train DVAE: {train_dvae}, Use GAT: {use_gat}, DVAE Epochs: {dvae_epochs}, GAT Epochs: {gat_epochs}")
     logger.info(f"Hierarchical mode: {hierarchical}")
+    logger.info(f"Batch key for Harmony: {batch_key if batch_key else 'None (no batch correction)'}")
 
     adata_train = sc.read_h5ad(train_path)
     adata_test = sc.read_h5ad(test_path)
     adata_train.raw = adata_train.copy()
     adata_test.raw = adata_test.copy()
     
+    # Standardize cell type labels in test data to match training format
+    logger.info("Standardizing cell type labels in test data...")
+    # Determine which column to use for ground truth
+    gt_col_train = 'Ground Truth' if 'Ground Truth' in adata_train.obs.columns else 'Celltype_training'
+    gt_col_test = 'Ground Truth' if 'Ground Truth' in adata_test.obs.columns else 'Celltype_training'
+    
+    train_labels = set(adata_train.obs[gt_col_train].unique())
+    adata_test = standardize_celltype_labels(adata_test, gt_col_test, train_labels)
     
     annotator = CellTypeAnnotator(
         use_dvae=train_dvae,
@@ -57,19 +103,17 @@ def train_pipeline(train_path: str, test_path: str, output_path: str, model_dir:
         gat_epochs=gat_epochs
     )
 
+    # Run pipeline with optional batch_key for Harmony batch correction
     adata_result, dvae_losses, gat_losses = annotator.run_pipeline(
         adata_train=adata_train,
         adata_test=adata_test,
-        save_visualizations=True,
-        use_gat=use_gat,
+        save_visualizations=True
     )
 
-    # ---- IMPORTANT: sanitize obs before writing to h5ad ----
-    sanitize_obs_for_h5ad(adata_result)
-
-    out_path = os.path.join(output_path, "adata_with_predictions.h5ad")
-    adata_result.write(out_path)
-    logger.info(f"[TRAIN MODE] Training pipeline completed. Saved to: {out_path}")
+    adata_result.write(os.path.join(output_path, "adata_with_predictions.h5ad"))
+    logger.info("[TRAIN MODE] Training pipeline completed")
+    
+    return adata_result
 
 def predict_pipeline(train_path: str, test_path: str, output_path: str, model_dir: str):
     logger.info("[PREDICT MODE] Running inference pipeline")
@@ -86,12 +130,8 @@ def predict_pipeline(train_path: str, test_path: str, output_path: str, model_di
         model_dir=model_dir
     )
 
-    # ---- OPTIONAL: sanitize before writing ----
-    sanitize_obs_for_h5ad(adata_result)
-
-    out_path = os.path.join(output_path, "adata_predicted.h5ad")
-    adata_result.write(out_path)
-    logger.info(f"[PREDICT MODE] Prediction pipeline completed. Saved to: {out_path}")
+    adata_result.write(os.path.join(output_path, "adata_predicted.h5ad"))
+    logger.info("[PREDICT MODE] Prediction pipeline completed")
 
 def main():
     parser = argparse.ArgumentParser(description="scLightGAT: Cell Type Annotation Pipeline")

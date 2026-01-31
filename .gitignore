@@ -1,39 +1,7 @@
-# Python cache
-__pycache__/
-*.py[cod]
-*.so
-
-# Virtual environment
-venv/
-
-# Notebook checkpoints
-.ipynb_checkpoints/
-
-# Log files
-*.log
-
-
-# Result folders
-results/
-logs/
-checkpoints/
-
-# IDE / Editor files
-.vscode/
-.idea/
-.DS_Store
-
-
-scLightGAT.egg-info/
-
-
-data/
-*.h5ad
-figures/
-notebooks/figures/
-venv/
-data/
-*.h5ad
-figures/
-notebooks/figures/
-venv/
+.basilisk_cache
+scLightGAT.backup/
+caf.related/
+thesis.exps_results/
+thesis.exps_results/
+caf.related/
+scLightGAT.backup/

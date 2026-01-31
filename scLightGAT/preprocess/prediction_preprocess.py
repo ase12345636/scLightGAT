@@ -24,6 +24,8 @@ def get_celltype_column(adata, celltype_col=None):
     """Determine the celltype column to use."""
     if celltype_col is not None and celltype_col in adata.obs.columns:
         return celltype_col
+    elif "Ground Truth" in adata.obs.columns:
+        return "Ground Truth"
     elif "Celltype_training" in adata.obs.columns:
         return "Celltype_training"
     else:
@@ -69,7 +71,7 @@ def generate_featurelist(markers_sorted, top):
     return final_features_per_cell_type
 
 def prepare_data_for_prediction(adata_train, adata_test, celltype_col=None, top_features=3000):
-    logger.info("⏰Preparing DGEs data")
+    logger.info("Preparing DGEs data")
     group = get_celltype_column(adata_train, celltype_col)
     train_markers = feature_selection(adata_train, group)
     train_dict = generate_featurelist(train_markers, top_features)
@@ -77,7 +79,7 @@ def prepare_data_for_prediction(adata_train, adata_test, celltype_col=None, top_
     train_deglist = list(itertools.chain(*train_dict.values()))
     common_hvgs = list(set(train_deglist) & set(adata_train.var_names) & set(adata_test.var_names))
 
-    logger.info(f"🧬Number of common DGEs: {len(common_hvgs)}🧬")
+    logger.info(f"Number of common DGEs: {len(common_hvgs)}")
 
     adata_train_dge = adata_train[:, common_hvgs].copy()
     adata_test_dge = adata_test[:, common_hvgs].copy()
@@ -90,14 +92,14 @@ def prepare_data_for_prediction(adata_train, adata_test, celltype_col=None, top_
     return adata_train_dge, adata_test_dge, common_hvgs
 
 def prepare_hvg_data(adata_train, adata_test, celltype_col=None):
-    logger.info("⏰Preparing HVG data")
+    logger.info("Preparing HVG data")
     group = get_celltype_column(adata_train, celltype_col)
     sc.pp.highly_variable_genes(adata_train, n_top_genes=3000, subset=False, layer="log_transformed", flavor="seurat_v3", batch_key=group)
     hvgs = adata_train.var[adata_train.var['highly_variable']].index
     
     # common HVGs
     common_hvgs = list(set(hvgs) & set(adata_test.var_names))
-    logger.info(f"🧬Number of common HVGs: {len(common_hvgs)}🧬")
+    logger.info(f"Number of common HVGs: {len(common_hvgs)}")
 
     adata_train_hvg = adata_train[:, common_hvgs].copy()
     adata_test_hvg = adata_test[:, common_hvgs].copy()
@@ -117,7 +119,7 @@ def transform_adata(adata, check_type):
     return matrix
 
 def prepare_lightgbm_data(adata_dge, celltype_col=None):
-    logger.info("💾Preparing data for LightGBM")
+    logger.info("Preparing data for LightGBM")
     check_type = get_celltype_column(adata_dge, celltype_col)
     matrix = transform_adata(adata_dge, check_type)
     # remove duplicated genes
@@ -132,7 +134,7 @@ def prepare_lightgbm_data(adata_dge, celltype_col=None):
     return X, y, encoder
 
 def prepare_dvae_data(adata_hvg, batch_size=32, celltype_col=None):
-    logger.info("💾Preparing data for DVAE")
+    logger.info("Preparing data for DVAE")
     check_type = get_celltype_column(adata_hvg, celltype_col)
     matrix = transform_adata(adata_hvg, check_type)
     
@@ -168,14 +170,14 @@ def balance_classes(X, y, target_count=10000):
     pipeline = Pipeline(steps=steps)
     X_resampled, y_resampled = pipeline.fit_resample(X, y)
 
-    logger.info(f"🔧Resampled class counts:\n{pd.Series(y_resampled).value_counts()}")
+    logger.info(f"Resampled class counts:\n{pd.Series(y_resampled).value_counts()}")
     return X_resampled, y_resampled
 
 def prepare_data(adata_train, adata_test, balanced_counts=10000, batch_size=128, celltype_col=None):
     """
     Optimized data preparation function with improved memory management.
     """
-    logger.info("💾Preparing data for all models")
+    logger.info("Preparing data for all models")
     
     
     for adata in [adata_train, adata_test]:
@@ -219,7 +221,7 @@ def prepare_data(adata_train, adata_test, balanced_counts=10000, batch_size=128,
         batch_size=batch_size, 
         shuffle=True,
         pin_memory=True, 
-        num_workers=4   
+        num_workers=0   # Disabled multiprocessing for shell heredoc compatibility
     )
     
     return {
@@ -234,7 +236,7 @@ def prepare_data(adata_train, adata_test, balanced_counts=10000, batch_size=128,
 
 def main_data_preparation(adata_train, adata_test, balanced_counts=10000, batch_size=32, celltype_col=None,
                           preprocess_params=None):
-    logger.info("💫💫💫Starting main data preparation process💫💫💫")
+    logger.info("Starting main data preparation process")
     
     # Preprocess adata_train and adata_test if preprocess_params is provided
     if preprocess_params is not None:
@@ -244,7 +246,7 @@ def main_data_preparation(adata_train, adata_test, balanced_counts=10000, batch_
     # Prepare data for all models
     all_data = prepare_data(adata_train, adata_test, balanced_counts, batch_size, celltype_col)
  
-    logger.info("💫💫💫Data preparation completed💫💫💫")
+    logger.info("Data preparation completed")
     return all_data
 
 
@@ -264,15 +266,18 @@ def split_and_save_cell_groups(adata, output_dir='group_data'):
     
     
     group_adatas = {}
+    # Get the celltype column name
+    celltype_col = 'Ground Truth' if 'Ground Truth' in adata.obs.columns else 'Celltype_training'
+    
     for group_name, cell_types in cell_groups.items():
         
-        mask = adata.obs['Celltype_training'].isin(cell_types)
+        mask = adata.obs[celltype_col].isin(cell_types)
         
         
         group_adata = adata[mask].copy()
         
         
-        cell_counts = group_adata.obs['Celltype_training'].value_counts()
+        cell_counts = group_adata.obs[celltype_col].value_counts()
         print(f"\n{group_name} group cell counts:")
         print(cell_counts)
         print(f"Total cells: {len(group_adata)}")
@@ -303,9 +308,11 @@ def prepare_subtype_data_from_gat(adata_train, gat_results, broad_type, top_feat
         'Plasma cells': ['IgA+ Plasma', 'IgG+ Plasma', 'Plasma cells', 'Plasmablasts']
     }
     
+    # Get celltype column name
+    celltype_col = 'Ground Truth' if 'Ground Truth' in adata_train.obs.columns else 'Celltype_training'
     
-    test_mask = gat_results.obs['GAT_pred'] == broad_type
-    train_mask = adata_train.obs['Celltype_training'] == broad_type
+    test_mask = gat_results.obs['scLightGAT_pred'] == broad_type
+    train_mask = adata_train.obs[celltype_col] == broad_type
     
     group_train = adata_train[train_mask].copy()
     group_test = gat_results[test_mask].copy()
