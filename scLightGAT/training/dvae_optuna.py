@@ -9,7 +9,7 @@ from datetime import datetime
 import torch
 import optuna
 
-from scLightGAT.logger_config import setup_logger
+from scLightGAT.logger_config import setup_logger, setup_warning_logging
 from scLightGAT.models.dvae_model import DVAE 
 # Assuming dvae_evaluation is in scLightGAT.evaluation
 from scLightGAT.evaluation.dvae_evaluation import compare_balanced_vs_imbalanced, optimize_dvae_params, save_results
@@ -55,6 +55,9 @@ def main():
         args.log_dir = os.path.join(args.save_dir, 'logs')
         
     logger = setup_logging(args.log_dir)
+    # Enable warning suppression
+    setup_warning_logging(os.path.join(args.log_dir, 'warnings.log'))
+    
     logger.info("Starting Optimization Pipeline")
     
     try:

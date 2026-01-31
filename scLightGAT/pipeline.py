@@ -6,11 +6,13 @@ import os
 import scanpy as sc
 import torch
 import time
-from scLightGAT.logger_config import setup_logger
+from scLightGAT.logger_config import setup_logger, setup_warning_logging
 from scLightGAT.training.model_manager import CellTypeAnnotator 
 from scLightGAT.visualization.visualization import plot_umap_by_label
 
 logger = setup_logger(__name__)
+# Enable warning suppression
+setup_warning_logging()
 
 # Label mapping from test data formats to training data format
 LABEL_MAPPING = {
