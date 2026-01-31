@@ -98,7 +98,7 @@ class GATModel(torch.nn.Module):
         self.train()
         
         # Use tqdm for progress display
-        pbar = tqdm(range(num_epochs), desc="Training GAT")
+        pbar = tqdm(range(num_epochs), desc="Training GAT", leave=True, ncols=100, bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]')
         
         for epoch in pbar:
             optimizer.zero_grad()
