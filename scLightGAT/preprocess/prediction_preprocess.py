@@ -33,7 +33,7 @@ def get_celltype_column(adata, celltype_col=None):
         raise ValueError(f"No valid celltype column found. Available columns are: {available_columns}")
 
 def feature_selection(adata, group):
-    logger.info(f"Performing feature selection using {group}")
+    logger.debug(f"Performing feature selection using {group}")
     sc.tl.rank_genes_groups(adata, groupby=group, method='t-test', reference='rest', use_raw=True)
     markers = sc.get.rank_genes_groups_df(adata, None)
     
@@ -48,7 +48,7 @@ def feature_selection(adata, group):
     return markers_sorted
 
 def generate_featurelist(markers_sorted, top):
-    logger.info(f"Generating feature list with top {top} features")
+    logger.debug(f"Generating feature list with top {top} features")
     selected_features = set()
     final_features_per_cell_type = {group: [] for group in markers_sorted['group'].unique()}
     
@@ -71,7 +71,7 @@ def generate_featurelist(markers_sorted, top):
     return final_features_per_cell_type
 
 def prepare_data_for_prediction(adata_train, adata_test, celltype_col=None, top_features=3000):
-    logger.info("Preparing DGEs data")
+    logger.debug("Preparing DGEs data")
     group = get_celltype_column(adata_train, celltype_col)
     train_markers = feature_selection(adata_train, group)
     train_dict = generate_featurelist(train_markers, top_features)
@@ -79,38 +79,38 @@ def prepare_data_for_prediction(adata_train, adata_test, celltype_col=None, top_
     train_deglist = list(itertools.chain(*train_dict.values()))
     common_hvgs = list(set(train_deglist) & set(adata_train.var_names) & set(adata_test.var_names))
 
-    logger.info(f"Number of common DGEs: {len(common_hvgs)}")
+    logger.debug(f"Number of common DGEs: {len(common_hvgs)}")
 
     adata_train_dge = adata_train[:, common_hvgs].copy()
     adata_test_dge = adata_test[:, common_hvgs].copy()
 
-    logger.info(f"Final shape of adata_train_dge: {adata_train_dge.shape}")
-    logger.info(f"Final shape of adata_test_dge: {adata_test_dge.shape}")
+    logger.debug(f"Final shape of adata_train_dge: {adata_train_dge.shape}")
+    logger.debug(f"Final shape of adata_test_dge: {adata_test_dge.shape}")
     adata_train_dge.var['prominent'] = adata_train_dge.var_names.isin(common_hvgs)
 
 
     return adata_train_dge, adata_test_dge, common_hvgs
 
 def prepare_hvg_data(adata_train, adata_test, celltype_col=None):
-    logger.info("Preparing HVG data")
+    logger.debug("Preparing HVG data")
     group = get_celltype_column(adata_train, celltype_col)
     sc.pp.highly_variable_genes(adata_train, n_top_genes=3000, subset=False, layer="log_transformed", flavor="seurat_v3", batch_key=group)
     hvgs = adata_train.var[adata_train.var['highly_variable']].index
     
     # common HVGs
     common_hvgs = list(set(hvgs) & set(adata_test.var_names))
-    logger.info(f"Number of common HVGs: {len(common_hvgs)}")
+    logger.debug(f"Number of common HVGs: {len(common_hvgs)}")
 
     adata_train_hvg = adata_train[:, common_hvgs].copy()
     adata_test_hvg = adata_test[:, common_hvgs].copy()
 
-    logger.info(f"Final shape of adata_train_hvg: {adata_train_hvg.shape}")
-    logger.info(f"Final shape of adata_test_hvg: {adata_test_hvg.shape}")
+    logger.debug(f"Final shape of adata_train_hvg: {adata_train_hvg.shape}")
+    logger.debug(f"Final shape of adata_test_hvg: {adata_test_hvg.shape}")
 
     return adata_train_hvg, adata_test_hvg
 
 def transform_adata(adata, check_type):
-    logger.info(f"Transforming AnnData object for {check_type}")
+    logger.debug(f"Transforming AnnData object for {check_type}")
     if "log_transformed" not in adata.layers:
         adata.layers["log_transformed"] = np.log1p(adata.X)
     matrix = adata.to_df(layer="log_transformed")
@@ -119,7 +119,7 @@ def transform_adata(adata, check_type):
     return matrix
 
 def prepare_lightgbm_data(adata_dge, celltype_col=None):
-    logger.info("Preparing data for LightGBM")
+    logger.debug("Preparing data for LightGBM")
     check_type = get_celltype_column(adata_dge, celltype_col)
     matrix = transform_adata(adata_dge, check_type)
     # remove duplicated genes
@@ -134,7 +134,7 @@ def prepare_lightgbm_data(adata_dge, celltype_col=None):
     return X, y, encoder
 
 def prepare_dvae_data(adata_hvg, batch_size=32, celltype_col=None):
-    logger.info("Preparing data for DVAE")
+    logger.debug("Preparing data for DVAE")
     check_type = get_celltype_column(adata_hvg, celltype_col)
     matrix = transform_adata(adata_hvg, check_type)
     
@@ -154,9 +154,9 @@ def prepare_dvae_data(adata_hvg, batch_size=32, celltype_col=None):
     return X, y, input_dim, dataloader, encoder
 
 def balance_classes(X, y, target_count=10000):
-    logger.info(f"Balancing classes with target count {target_count}")
+    logger.debug(f"Balancing classes with target count {target_count}")
     class_counts = pd.Series(y).value_counts()
-    logger.info(f"Original class counts:\n{class_counts}")
+    logger.debug(f"Original class counts:\n{class_counts}")
 
     over_strategy = {label: target_count for label, count in class_counts.items() if count < target_count}
     under_strategy = {label: target_count for label, count in class_counts.items() if count > target_count}
@@ -170,14 +170,14 @@ def balance_classes(X, y, target_count=10000):
     pipeline = Pipeline(steps=steps)
     X_resampled, y_resampled = pipeline.fit_resample(X, y)
 
-    logger.info(f"Resampled class counts:\n{pd.Series(y_resampled).value_counts()}")
+    logger.debug(f"Resampled class counts:\n{pd.Series(y_resampled).value_counts()}")
     return X_resampled, y_resampled
 
 def prepare_data(adata_train, adata_test, balanced_counts=10000, batch_size=128, celltype_col=None):
     """
     Optimized data preparation function with improved memory management.
     """
-    logger.info("Preparing data for all models")
+    logger.debug("Preparing data for all models")
     
     
     for adata in [adata_train, adata_test]:
@@ -185,7 +185,7 @@ def prepare_data(adata_train, adata_test, balanced_counts=10000, batch_size=128,
             adata.raw = adata.copy()
         if "log_transformed" not in adata.layers:
             if isinstance(adata.X, np.ndarray) and adata.X.size > 1e8:
-                logger.info("Processing large matrix in chunks")
+                logger.debug("Processing large matrix in chunks")
                 chunk_size = 10000
                 log_matrix = np.zeros_like(adata.X)
                 for i in range(0, adata.shape[0], chunk_size):
@@ -236,7 +236,7 @@ def prepare_data(adata_train, adata_test, balanced_counts=10000, batch_size=128,
 
 def main_data_preparation(adata_train, adata_test, balanced_counts=10000, batch_size=32, celltype_col=None,
                           preprocess_params=None):
-    logger.info("Starting main data preparation process")
+    logger.debug("Starting main data preparation process")
     
     # Preprocess adata_train and adata_test if preprocess_params is provided
     if preprocess_params is not None:
@@ -246,7 +246,7 @@ def main_data_preparation(adata_train, adata_test, balanced_counts=10000, batch_
     # Prepare data for all models
     all_data = prepare_data(adata_train, adata_test, balanced_counts, batch_size, celltype_col)
  
-    logger.info("Data preparation completed")
+    logger.debug("Data preparation completed")
     return all_data
 
 
@@ -294,7 +294,7 @@ def split_and_save_cell_groups(adata, output_dir='group_data'):
     return group_adatas
 def prepare_subtype_data_from_gat(adata_train, gat_results, broad_type, top_features=1000):
     """According GAT outcome to predict second round"""
-    logger.info(f"Preparing subtype data for {broad_type}")
+    logger.debug(f"Preparing subtype data for {broad_type}")
     
     # Define cell subtype
     broad_to_subtypes = {
@@ -322,7 +322,7 @@ def prepare_subtype_data_from_gat(adata_train, gat_results, broad_type, top_feat
         return None, None, test_mask, None
 
     if broad_type not in broad_to_subtypes:
-        logger.info(f"{broad_type} has no subtypes")
+        logger.debug(f"{broad_type} has no subtypes")
         return None, None, test_mask, None
     
     # DGE analysis for feature selection

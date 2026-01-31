@@ -84,7 +84,15 @@ def standardize_celltype_labels(adata, label_col=None, train_labels=None):
 
 def train_pipeline(train_path: str, test_path: str, output_path: str, model_dir: str, train_dvae: bool, use_gat: bool, dvae_epochs: int, gat_epochs: int, hierarchical: bool = False, batch_key: str = None):
     start_time = time.time()
-    logger.info("[TRAIN MODE] Starting training pipeline")
+    # Create log file in output directory
+    log_path = os.path.join(output_path, "pipeline_run.log")
+    
+    # Re-setup logger to include file handler
+    setup_logger("scLightGAT", log_file=log_path)
+    # Also redirect warnings to this log file
+    setup_warning_logging(log_path)
+    
+    logger.info(f"[TRAIN MODE] Starting training pipeline (Logs: {log_path})")
     
     # Detailed config logs commented out to reduce verbosity
     # logger.info(f"Train data: {train_path}")

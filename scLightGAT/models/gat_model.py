@@ -165,8 +165,8 @@ class GATModel(torch.nn.Module):
             zero_division=0
         )
 
-        logger.info(f"Accuracy: {accuracy:.4f}")
-        logger.info("Classification Report:")
-        logger.info(report)
+        logger.debug(f"Accuracy: {accuracy:.4f}")
+        logger.debug("Classification Report:")
+        logger.debug(report)
 
         return pred_np, accuracy

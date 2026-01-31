@@ -43,7 +43,7 @@ class LightGBMModel:
         """
         self.n_class = len(np.unique(y))
         if self.use_default_params:
-            logger.info("Using default parameters")
+            logger.debug("Using default parameters")
             self.best_params = {
                 'max_depth': 10,
                 'num_leaves': 77,
@@ -57,7 +57,7 @@ class LightGBMModel:
                 'reg_lambda': 0.1
             }
         else:
-            logger.info(f"Optimizing LightGBM parameters with {n_trials} trials")
+            logger.debug(f"Optimizing LightGBM parameters with {n_trials} trials")
             
             def objective(trial):
                 params = {
@@ -88,7 +88,7 @@ class LightGBMModel:
             study.optimize(objective, n_trials=n_trials)
             self.best_params = study.best_params
             
-        logger.info(f"Best parameters: {self.best_params}")
+        logger.debug(f"Best parameters: {self.best_params}")
 
 
     def train(self, X, y, test_size=0.3, random_state=42, group_name=None, class_names=None):
@@ -117,7 +117,7 @@ class LightGBMModel:
             X, y, test_size=test_size, random_state=random_state, stratify=y
         )
 
-        logger.info(f"Training LightGBM model with {len(X_train)} samples, {X_train.shape[1]} features")
+        logger.debug(f"Training LightGBM model with {len(X_train)} samples, {X_train.shape[1]} features")
         
         # Initialize model with optimized parameters
         self.model = LGBMClassifier(
@@ -190,7 +190,7 @@ class LightGBMModel:
         plt.tight_layout()
         plt.savefig(filename, dpi=300, bbox_inches='tight')
         plt.close()
-        logger.info(f"Confusion matrix saved to {filename}")
+        logger.debug(f"Confusion matrix saved to {filename}")
 
     def predict(self, X):
         """
@@ -255,7 +255,7 @@ class LightGBMModel:
             raise ValueError("Model has not been trained yet")
             
         joblib.dump(self.model, model_path)
-        logger.info(f"Model saved to {model_path}")
+        logger.debug(f"Model saved to {model_path}")
         
     def load_model(self, model_path):
         """
@@ -266,7 +266,7 @@ class LightGBMModel:
         """
         self.model = joblib.load(model_path)
         self.n_class = self.model.n_classes_
-        logger.info(f"Model loaded from {model_path}")
+        logger.debug(f"Model loaded from {model_path}")
 
 
 def train_lightgbm(X, y, model_dir):
@@ -300,7 +300,7 @@ def train_lightgbm(X, y, model_dir):
     joblib.dump(model, model_path)
     joblib.dump(encoder, encoder_path)
     
-    logger.info(f"Model and encoder saved to {model_dir}")
+    logger.debug(f"Model and encoder saved to {model_dir}")
     return model, encoder
 
 def load_lightgbm_model(model_dir):
@@ -319,5 +319,5 @@ def load_lightgbm_model(model_dir):
     model = joblib.load(model_path)
     encoder = joblib.load(encoder_path)
     
-    logger.info(f"Model and encoder loaded from {model_dir}")
+    logger.debug(f"Model and encoder loaded from {model_dir}")
     return model, encoder

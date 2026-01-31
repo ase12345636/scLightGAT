@@ -85,9 +85,9 @@ class CellTypeAnnotator:
         if dvae_params:
             self.dvae_params.update(dvae_params)
         
-        logger.info(f"CellTypeAnnotator initialized on device: {self.device}")
-        logger.info(f"DVAE enabled: {self.use_dvae}, HVG enabled: {self.use_hvg}")
-        logger.info(f"Hierarchical classification: {self.hierarchical}")
+        logger.debug(f"CellTypeAnnotator initialized on device: {self.device}")
+        logger.debug(f"DVAE enabled: {self.use_dvae}, HVG enabled: {self.use_hvg}")
+        logger.debug(f"Hierarchical classification: {self.hierarchical}")
     
     def initialize_dvae(self, input_dim: int):
         """Initialize DVAE model with current parameters"""
@@ -1148,10 +1148,11 @@ class CellTypeAnnotator:
         if gat_epochs is not None:
             self.gat_epochs = gat_epochs
         
-        logger.info("Starting complete annotation pipeline")
+        logger.debug("Starting complete annotation pipeline")
         
         # Feature extraction
         start_time = time.time()
+        logger.info("[Step 1/3] Starting Feature Extraction")
         feature_data = self.run_feature_extraction(
             adata_train,
             adata_test
@@ -1160,11 +1161,13 @@ class CellTypeAnnotator:
         
         # Classification
         start_time = time.time()
+        logger.info("[Step 2/3] Starting Classification")
         classification_data = self.run_classification(feature_data)
         logger.info(f"Classification completed in {time.time() - start_time:.2f} seconds")
         
         # Refinement
         start_time = time.time()
+        logger.info("[Step 3/3] Starting Refinement (GAT)")
         refined_data, gat_losses = self.run_refinement(
             classification_data,
             batch_key=None
