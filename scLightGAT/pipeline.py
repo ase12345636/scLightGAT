@@ -46,12 +46,15 @@ def standardize_celltype_labels(adata, label_col=None, train_labels=None):
     """
     # Auto-detect label column
     if label_col is None:
-        if 'Ground Truth' in adata.obs.columns:
+        if 'Manual_celltype' in adata.obs.columns:
+            label_col = 'Manual_celltype'
+            logger.info("Using 'Manual_celltype' as Ground Truth")
+        elif 'Ground Truth' in adata.obs.columns:
             label_col = 'Ground Truth'
         elif 'Celltype_training' in adata.obs.columns:
             label_col = 'Celltype_training'
         else:
-            logger.warning("No Ground Truth or Celltype_training column found")
+            logger.warning("No Manual_celltype, Ground Truth or Celltype_training column found")
             return adata
     
     # Convert to string to avoid Categorical issues
@@ -66,6 +69,11 @@ def standardize_celltype_labels(adata, label_col=None, train_labels=None):
             adata.obs.loc[mask, label_col] = new_label
             logger.info(f"Label mapping: '{old_label}' -> '{new_label}' ({count} cells)")
             mapped_count += count
+    
+    # If using Manual_celltype or others, alias it to 'Ground Truth' for internal consistency if not present
+    if label_col != 'Ground Truth':
+        adata.obs['Ground Truth'] = adata.obs[label_col]
+        logger.info(f"Aliased '{label_col}' to 'Ground Truth' for pipeline consistency")
     
     if mapped_count > 0:
         logger.info(f"Total cells with standardized labels: {mapped_count}")
@@ -91,8 +99,15 @@ def train_pipeline(train_path: str, test_path: str, output_path: str, model_dir:
     # Standardize cell type labels in test data to match training format
     # logger.info("Standardizing cell type labels in test data...")
     # Determine which column to use for ground truth
-    gt_col_train = 'Ground Truth' if 'Ground Truth' in adata_train.obs.columns else 'Celltype_training'
-    gt_col_test = 'Ground Truth' if 'Ground Truth' in adata_test.obs.columns else 'Celltype_training'
+    def get_gt_col(adata):
+        if 'Manual_celltype' in adata.obs.columns:
+            return 'Manual_celltype'
+        if 'Ground Truth' in adata.obs.columns:
+            return 'Ground Truth'
+        return 'Celltype_training'
+
+    gt_col_train = get_gt_col(adata_train)
+    gt_col_test = get_gt_col(adata_test)
     
     train_labels = set(adata_train.obs[gt_col_train].unique())
     adata_test = standardize_celltype_labels(adata_test, gt_col_test, train_labels)
