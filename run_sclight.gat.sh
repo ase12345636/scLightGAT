@@ -55,7 +55,7 @@ echo "Using Python: $(which python3)"
 # ============================================================================
 
 # Base paths
-PROJECT_ROOT="/Group16T/common/lcy/dslab_lcy/GitRepo/scLightGAT"
+PROJECT_ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 SCLIGHTGAT_DIR="${PROJECT_ROOT}/scLightGAT"
 DATA_DIR="${PROJECT_ROOT}/scLightGAT_data"
 
