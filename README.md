@@ -6,6 +6,8 @@ We propose **scLightGAT**, a Python-native, biologically informed, and computati
 2. **LightGBM**: A gradient-boosted classifier uses the fused latent (Z) and DGE marker (M_DGE) features for an initial cell-type prediction.
 3. **GATs**: Graph Attention Networks refine LightGBM’s output by modeling neighborhood interactions on a single-cell graph (SCG).
 
+![scLightGAT Workflow](docs/figures/overall.png)
+
 ---
 
 ## Installation
