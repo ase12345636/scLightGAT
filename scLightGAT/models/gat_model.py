@@ -8,8 +8,9 @@ from sklearn.metrics import accuracy_score, classification_report
 from tqdm import tqdm
 from torch.cuda.amp import autocast, GradScaler
 
+import logging
 from scLightGAT.logger_config import setup_logger
-logger = setup_logger(__name__)
+logger = logging.getLogger(__name__)
 
 class GATModel(torch.nn.Module):
     """
@@ -98,7 +99,9 @@ class GATModel(torch.nn.Module):
         self.train()
         
         # Use tqdm for progress display
-        pbar = tqdm(range(num_epochs), desc="Training GAT", leave=True, ncols=100, bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]')
+        # Remove leave=True unless necessary, usually helps with clutter. 
+        # Using dynamic_ncols to adapt to terminal width.
+        pbar = tqdm(range(num_epochs), desc="Training GAT", leave=True, dynamic_ncols=True)
         
         for epoch in pbar:
             optimizer.zero_grad()

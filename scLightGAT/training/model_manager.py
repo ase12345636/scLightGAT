@@ -25,7 +25,7 @@ from scLightGAT.visualization.visualization import plot_prediction_comparison, c
 from scLightGAT.preprocess.preprocess import visualization_process
 from scLightGAT.logger_config import setup_logger
 
-logger = setup_logger(__name__)
+logger = logging.getLogger(__name__)
 
 class CellTypeAnnotator:
     """
@@ -205,7 +205,7 @@ class CellTypeAnnotator:
         epoch_losses = []
         
         # Training loop
-        pbar = tqdm(range(epochs), desc="Training DVAE")
+        pbar = tqdm(range(epochs), desc="Training Contrastive-DVAE", leave=True, dynamic_ncols=True)
         for epoch in pbar:
             self.dvae.train()
             epoch_loss = 0
@@ -753,7 +753,10 @@ class CellTypeAnnotator:
             test_accuracy = accuracy_score(y_true, y_pred)
             logger.info(f"[INDEPENDENT TEST SET] LightGBM Accuracy: {test_accuracy:.4f}")
             
-            report = classification_report(y_true, y_pred, zero_division=0)
+            # Filter classification report to exclude zero-support classes
+            unique_gt = set(y_true)
+            filtered_labels = [l for l in sorted(set(y_true) | set(y_pred)) if l in unique_gt]
+            report = classification_report(y_true, y_pred, labels=filtered_labels, zero_division=0)
             logger.info(f"[INDEPENDENT TEST SET] Classification Report:\n{report}")
             
             # Plot confusion matrix for independent test set
@@ -1150,29 +1153,50 @@ class CellTypeAnnotator:
         
         logger.debug("Starting complete annotation pipeline")
         
+        # Define pipeline stages with pretty names
+        stages = [
+            ("Feature Extraction", "Training Contrastive-DVAE" if self.use_dvae else "Extracting DGE Features"),
+            ("Classification", "Training LightGBM"),
+            ("Refinement", "Training GAT")
+        ]
+        total_stages = len(stages)
+        
+        # Display pipeline header
+        logger.info("=" * 60)
+        logger.info("scLightGAT Pipeline Progress")
+        logger.info("=" * 60)
+        
         # Feature extraction
         start_time = time.time()
-        logger.info("[Step 1/3] Starting Feature Extraction")
+        logger.info(f"[Stage 1/{total_stages}] {stages[0][0]}: {stages[0][1]}")
         feature_data = self.run_feature_extraction(
             adata_train,
             adata_test
         )
-        logger.info(f"Feature extraction completed in {time.time() - start_time:.2f} seconds")
+        stage1_time = time.time() - start_time
+        logger.info(f"[Stage 1/{total_stages}] {stages[0][0]} completed in {stage1_time:.2f}s")
         
         # Classification
         start_time = time.time()
-        logger.info("[Step 2/3] Starting Classification")
+        logger.info(f"[Stage 2/{total_stages}] {stages[1][0]}: {stages[1][1]}")
         classification_data = self.run_classification(feature_data)
-        logger.info(f"Classification completed in {time.time() - start_time:.2f} seconds")
+        stage2_time = time.time() - start_time
+        logger.info(f"[Stage 2/{total_stages}] {stages[1][0]} completed in {stage2_time:.2f}s")
         
         # Refinement
         start_time = time.time()
-        logger.info("[Step 3/3] Starting Refinement (GAT)")
+        logger.info(f"[Stage 3/{total_stages}] {stages[2][0]}: {stages[2][1]}")
         refined_data, gat_losses = self.run_refinement(
             classification_data,
             batch_key=None
         )
-        logger.info(f"Refinement (GAT) completed in {time.time() - start_time:.2f} seconds")
+        stage3_time = time.time() - start_time
+        logger.info(f"[Stage 3/{total_stages}] {stages[2][0]} completed in {stage3_time:.2f}s")
+        
+        # Display pipeline summary
+        logger.info("=" * 60)
+        total_time = stage1_time + stage2_time + stage3_time
+        logger.info(f"Pipeline Summary: Total time {total_time:.2f}s")
         
         # Subtype prediction (optional)
         if run_subtypes:

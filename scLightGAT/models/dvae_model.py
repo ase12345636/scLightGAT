@@ -6,8 +6,9 @@ import torch.nn.functional as F
 from typing import Tuple
 from copy import deepcopy
 
+import logging
 from scLightGAT.logger_config import setup_logger
-logger = setup_logger(__name__)
+logger = logging.getLogger(__name__)
 
 class Encoder(nn.Module):
     """

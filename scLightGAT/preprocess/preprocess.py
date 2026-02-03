@@ -10,8 +10,9 @@ import scanpy.external as sce
 import scrublet as scr
 import matplotlib.pyplot as plt
 from matplotlib.pyplot import rc_context
+import logging
 from scLightGAT.logger_config import setup_logger
-logger = setup_logger(__name__)
+logger = logging.getLogger(__name__)
 
 def detect_doublets(adata, expected_doublet_rate=0.06):
     logger.info("Starting doublets detection")

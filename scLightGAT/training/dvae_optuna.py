@@ -12,7 +12,7 @@ import optuna
 from scLightGAT.logger_config import setup_logger, setup_warning_logging
 from scLightGAT.models.dvae_model import DVAE 
 # Assuming dvae_evaluation is in scLightGAT.evaluation
-from scLightGAT.evaluation.dvae_evaluation import compare_balanced_vs_imbalanced, optimize_dvae_params, save_results
+from scLightGAT.evaluation.dvae_evaluation import extract_features_dvae, optimize_dvae_params, save_results
 
 # Setup logger
 # Note: scLightGAT.logger_config.setup_logger might be enough, but we want file logging too as per original
@@ -95,7 +95,7 @@ def main():
         # Train with best parameters for verification/stats
         logger.info("Starting validation with best parameters")
         training_params = {**base_params, **best_params}
-        results = compare_balanced_vs_imbalanced(adata, **training_params)
+        results = extract_features_dvae(adata, params=training_params, use_hvg=True)
         
         # Save results
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')

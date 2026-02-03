@@ -5,9 +5,9 @@ import optuna
 import os
 from scLightGAT.models.dvae_model import DVAE
 
-# Optional: logger if needed
+import logging
 from scLightGAT.logger_config import setup_logger
-logger = setup_logger(__name__)
+logger = logging.getLogger(__name__)
 
 def extract_features_dvae(adata, model, device):
     """

@@ -5,12 +5,27 @@ def setup_logger(name: str = "scLightGAT", log_file: str = None):
     logger = logging.getLogger(name)
     logger.setLevel(logging.DEBUG)  # Set root to lower level to capture all
 
-    # Avoid adding duplicate handlers if they already exist
-    # But we might want to add a file handler if it's new
+    # Check if this logger or its parents already have handlers
+    # If a parent has handlers and propagate is True, we don't need to add a console handler
+    has_console = False
     
-    # Check for console handler
-    has_console = any(isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler) for h in logger.handlers)
+    # Check current logger
+    if any(isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler) for h in logger.handlers):
+        has_console = True
     
+    # Check parents if propagation is on
+    if logger.propagate and not has_console:
+        parent = logger.parent
+        while parent:
+            if any(isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler) for h in parent.handlers):
+                has_console = True
+                break
+            if not parent.propagate:
+                break
+            parent = parent.parent
+
+    # Only add console handler if NO parent handles it (i.e. we are setting up the root or a detached logger)
+    # OR if this is the main setup call (name="scLightGAT")
     if not has_console:
         # Create console handler
         ch = logging.StreamHandler(sys.stdout)
@@ -24,35 +39,31 @@ def setup_logger(name: str = "scLightGAT", log_file: str = None):
         ch.setFormatter(formatter)
         logger.addHandler(ch)
 
-    # Add file handler if provided and not present
+    # Add file handler if provided
     if log_file:
-        # Check if this specific file is already being logged to to avoid duplication?
-        # Or just check if any FileHandler exists? 
-        # Better: check if we are already logging to this file. 
-        # Simplified: just add it. Python logging is thread safe but duplicates can happen if called repeatedly.
-        # We will assume calling convention manages this, or check existence.
+        # Check if we already have a file handler for THIS specific file
+        # This is a bit tricky, but we can check baseFilename of FileHandlers
+        
+        # Resolve absolute path to be sure
+        import os
+        abs_log_file = os.path.abspath(log_file)
         
         has_file = False
         for h in logger.handlers:
              if isinstance(h, logging.FileHandler):
-                 # We could check h.baseFilename but let's just assume if we have a file handler, we append?
-                 # Actually user might run multiple pipelines. 
-                 # Let's just add it if not present.
-                 pass
+                 if os.path.abspath(h.baseFilename) == abs_log_file:
+                     has_file = True
+                     break
         
-        # Always add a new file handler for this run if passed, 
-        # ensuring we capture this specific run's logs.
-        # But prevent adding identical one?
-        
-        # Let's just create it.
-        fh = logging.FileHandler(log_file)
-        fh.setLevel(logging.DEBUG) # File captures EVERYTHING
-        formatter = logging.Formatter(
-            '%(asctime)s - %(levelname)s - %(name)s - %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
-        )
-        fh.setFormatter(formatter)
-        logger.addHandler(fh)
+        if not has_file:
+            fh = logging.FileHandler(log_file)
+            fh.setLevel(logging.DEBUG) # File captures EVERYTHING
+            formatter = logging.Formatter(
+                '%(asctime)s - %(levelname)s - %(name)s - %(message)s',
+                datefmt='%Y-%m-%d %H:%M:%S'
+            )
+            fh.setFormatter(formatter)
+            logger.addHandler(fh)
 
     return logger
 

@@ -5,11 +5,12 @@ import numpy as np
 import pandas as pd
 from typing import List, Optional
 from sklearn.metrics import confusion_matrix
+import logging
 from scLightGAT.logger_config import setup_logger
 from typing import List, Optional, Dict, Tuple, Any
 
 
-logger = setup_logger(__name__)
+logger = logging.getLogger(__name__)
 
 def check_visualization_ready(adata):
     """

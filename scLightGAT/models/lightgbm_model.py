@@ -10,10 +10,11 @@ from sklearn.metrics import accuracy_score, classification_report, confusion_mat
 from sklearn.preprocessing import LabelEncoder
 import joblib
 import os
+import logging
 from scLightGAT.logger_config import setup_logger
 
 # Initialize logger
-logger = setup_logger(__name__)
+logger = logging.getLogger(__name__)
 
 class LightGBMModel:
     """

@@ -115,7 +115,7 @@ The pipeline automatically detects ground truth columns (e.g., `Manual_celltype`
 
 ## Experimental Results
 
-Results are saved to `sclightgat_exp_results/<DATASET_NAME>/`, containing:
+Results are saved to `sclightgat_exp_results/<DATASET_NAME>/<TIMESTAMP>/`, containing:
 - **`adata_with_predictions.h5ad`**: Final AnnData with `scLightGAT_pred`.
 - **`accuracy_report.txt`**: Detailed accuracy metrics.
 - **`umap_comparison.png`**: Side-by-side UMAP of Ground Truth vs scLightGAT.

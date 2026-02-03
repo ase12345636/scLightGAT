@@ -16,8 +16,9 @@ from scLightGAT.preprocess.preprocess import preprocess_adata
 
 import os
 
+import logging
 from scLightGAT.logger_config import setup_logger
-logger = setup_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 def get_celltype_column(adata, celltype_col=None):

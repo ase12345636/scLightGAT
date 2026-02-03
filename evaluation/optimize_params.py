@@ -36,10 +36,12 @@ logger = setup_logger(__name__)
 # Default Paths
 # =============================================================================
 
-DATA_DIR = '/Group16T/common/lcy/dslab_lcy/GitRepo/scLightGAT/data/scLightGAT_data'
-TRAIN_PATH = f'{DATA_DIR}/Integrated_training/train.h5ad'
-TEST_PATH = f'{DATA_DIR}/Independent_testing/GSE115978.h5ad'
-OUTPUT_DIR = '/Group16T/common/lcy/dslab_lcy/GitRepo/scLightGAT/evaluation_results'
+# Get project root (2 levels up from this script location: evaluation/optimize_params.py -> project_root)
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_DIR = os.path.join(PROJECT_ROOT, 'scLightGAT_data')
+TRAIN_PATH = os.path.join(DATA_DIR, 'Integrated_training', 'train.h5ad')
+TEST_PATH = os.path.join(DATA_DIR, 'Independent_testing', 'GSE115978.h5ad')
+OUTPUT_DIR = os.path.join(PROJECT_ROOT, 'sclightgat_exp_results')
 
 
 # =============================================================================

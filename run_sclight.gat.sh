@@ -56,6 +56,7 @@ echo "Using Python: $(which python3)"
 
 # Base paths
 PROJECT_ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+export PROJECT_ROOT
 SCLIGHTGAT_DIR="${PROJECT_ROOT}/scLightGAT"
 DATA_DIR="${PROJECT_ROOT}/scLightGAT_data"
 
@@ -86,6 +87,8 @@ USE_GAT="True"
 HIERARCHICAL="False"
 CAF_MODE="False"
 INFERENCE_ONLY="False"  # Skip training, use cached models
+OPTIMIZE="False"
+OPTUNA_TRIALS=20
 
 # ============================================================================
 # Test Datasets
@@ -138,6 +141,8 @@ print_usage() {
     echo "  --dvae-epochs N    Number of DVAE epochs (default: 5)"
     echo "  --gat-epochs N     Number of GAT epochs (default: 300)"
     echo "  --batch-key KEY    Batch key for Harmony correction"
+    echo "  --optimize         Run hyperparameter optimization via Optuna"
+    echo "  --optuna-trials N  Number of Optuna trials (default: 20)"
     echo "  --list-batch-keys  Show potential batch keys for each dataset"
     echo "  --help             Show this help message"
     echo "  --list             List available datasets"
@@ -146,7 +151,10 @@ print_usage() {
     echo "  $0                              # Run on all datasets"
     echo "  $0 GSE115978                    # Run on GSE115978 only"
     echo "  $0 --dvae-epochs 10 GSE115978   # Custom DVAE epochs"
+    echo "  $0 GSE115978                    # Run on GSE115978 only"
+    echo "  $0 --dvae-epochs 10 GSE115978   # Custom DVAE epochs"
     echo "  $0 --batch-key samples GSE115978  # With batch correction"
+    echo "  $0 --optimize --optuna-trials 50 sapiens_full  # Run optimization"
 }
 
 list_batch_keys() {
@@ -155,7 +163,7 @@ list_batch_keys() {
 import scanpy as sc
 import os
 
-test_dir = "/Group16T/common/lcy/dslab_lcy/GitRepo/scLightGAT/data/scLightGAT_data/Independent_testing"
+test_dir = f"{os.environ['PROJECT_ROOT']}/scLightGAT_data/Independent_testing"
 
 for f in sorted(os.listdir(test_dir)):
     if f.endswith('.h5ad'):
@@ -173,10 +181,15 @@ run_training() {
     local dataset_name="$1"
     local test_path="$2"
     
-    # Determine output path based on hierarchical mode
-    local output_path="${OUTPUT_DIR}/${dataset_name}"
+    # Determine output path based on hierarchical mode and TIMESTAMP
+    # Generate timestamp for this run
+    TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+    
+    local output_base="${OUTPUT_DIR}/${dataset_name}"
+    local output_path="${output_base}/${TIMESTAMP}"
+    
     if [[ "${HIERARCHICAL}" == "True" ]]; then
-        output_path="${OUTPUT_DIR}/${dataset_name}/hierarchical"
+        output_path="${OUTPUT_DIR}/${dataset_name}/hierarchical/${TIMESTAMP}"
     fi
     
     # Determine pipeline title
@@ -363,6 +376,14 @@ main() {
                 INFERENCE_ONLY="True"
                 shift
                 ;;
+            --optimize)
+                OPTIMIZE="True"
+                shift
+                ;;
+            --optuna-trials)
+                OPTUNA_TRIALS="$2"
+                shift 2
+                ;;
             --list-batch-keys)
                 list_batch_keys
                 exit 0
@@ -407,7 +428,13 @@ main() {
     echo "  Use DVAE:      ${USE_DVAE}"
     echo "  Use GAT:       ${USE_GAT}"
     echo "  Hierarchical:  ${HIERARCHICAL}"
+    echo "  Use GAT:       ${USE_GAT}"
+    echo "  Hierarchical:  ${HIERARCHICAL}"
     echo "  Inference-only: ${INFERENCE_ONLY}"
+    echo "  Optimize:      ${OPTIMIZE}"
+    if [[ "${OPTIMIZE}" == "True" ]]; then
+        echo "  Optuna Trials: ${OPTUNA_TRIALS}"
+    fi
     echo ""
     
     # Check if training data exists
@@ -421,7 +448,36 @@ main() {
     
     # Run on specific dataset or all datasets
     # Run on specific dataset or interactive CAF mode or all datasets
-    if [ -n "${DATASET_NAME}" ]; then
+    if [[ "${OPTIMIZE}" == "True" ]]; then
+        # Optimization Mode
+        if [ -z "${DATASET_NAME}" ]; then
+             echo "Error: Optimization requires a dataset name (e.g. ./run_sclight.gat.sh --optimize sapiens_full)"
+             exit 1
+        fi
+        
+        # We need to find the dataset path first (re-using logic from above but simpler)
+        if [ -n "${DATASETS[$DATASET_NAME]}" ]; then
+            test_path="${DATASETS[$DATASET_NAME]}"
+        else
+            echo "Error: Unknown dataset for optimization: ${DATASET_NAME}"
+            exit 1
+        fi
+        
+        print_header "Optimization Pipeline: ${DATASET_NAME}"
+        echo "Trials: ${OPTUNA_TRIALS}"
+        
+        # Generate timestamp for this run
+        TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+        
+        export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH}"
+        
+        # Call the optimization script (restored from backup logic)
+        python3 -m scLightGAT.training.dvae_optuna \
+            --data_path "${test_path}" \
+            --n_trials "${OPTUNA_TRIALS}" \
+            --save_dir "${OUTPUT_DIR}/${DATASET_NAME}/${TIMESTAMP}"
+
+    elif [ -n "${DATASET_NAME}" ]; then
         # Check if it is a pre-defined dataset
         if [ -n "${DATASETS[$DATASET_NAME]}" ]; then
             test_path="${DATASETS[$DATASET_NAME]}"
@@ -472,32 +528,6 @@ main() {
         echo "detected dataset name: ${custom_dataset_name}"
         run_training "${custom_dataset_name}" "${custom_test_path}"
         
-    elif [[ "${OPTIMIZE}" == "True" ]]; then
-        # Optimization Mode
-        if [ -z "${DATASET_NAME}" ]; then
-             echo "Error: Optimization requires a dataset name (e.g. ./run_sclight.gat.sh --optimize sapiens_full)"
-             exit 1
-        fi
-        
-        # We need to find the dataset path first (re-using logic from above but simpler)
-        if [ -n "${DATASETS[$DATASET_NAME]}" ]; then
-            test_path="${DATASETS[$DATASET_NAME]}"
-        else
-            echo "Error: Unknown dataset for optimization: ${DATASET_NAME}"
-            exit 1
-        fi
-        
-        print_header "Optimization Pipeline: ${DATASET_NAME}"
-        echo "Trials: ${OPTUNA_TRIALS}"
-        
-        export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH}"
-        
-        # Call the optimization script (restored from backup logic)
-        python3 -m scLightGAT.training.dvae_optuna \
-            --data_path "${test_path}" \
-            --n_trials "${OPTUNA_TRIALS}" \
-            --save_dir "${OUTPUT_DIR}/${DATASET_NAME}"
-            
     else
         echo "Running on all pre-defined datasets..."
         for dataset_name in "${!DATASETS[@]}"; do
