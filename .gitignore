@@ -3,9 +3,14 @@ caf.related/
 docker/
 scLightGAT.backup/
 scLightGAT_data/
+# ignore experiment outputs
+sclightgat_exp_results/
 thesis.exps_results/
+
 __pycache__/
 *.pyc
 *.log
 *.png
 results/
+saved_models/
+docs/
