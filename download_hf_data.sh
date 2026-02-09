@@ -35,10 +35,9 @@ echo "Target Repository: https://huggingface.co/datasets/$REPO_ID"
 echo "Download Location: $TARGET_ROOT"
 echo "========================================================"
 
-# Check for huggingface-cli
-if ! command -v huggingface-cli &> /dev/null; then
-    echo "Error: huggingface-cli not found."
-    echo "Please install it using: pip install huggingface_hub"
+# Check for Python and huggingface_hub
+if ! command -v python3 &> /dev/null; then
+    echo "Error: python3 not found."
     exit 1
 fi
 
@@ -46,15 +45,29 @@ fi
 mkdir -p "$TARGET_ROOT"
 
 echo "Starting download..."
-# specific-files download is cleaner than cloning the whole repo if .git is not needed
-# But downloading the whole snapshot is easiest for directory structure preservation.
-# using --repo-type dataset
+# Using Python directly to download from Hugging Face
+python3 << 'PYEOF'
+import sys
+import os
+from huggingface_hub import snapshot_download
 
-huggingface-cli download "$REPO_ID" \
-    --repo-type dataset \
-    --local-dir "$TARGET_ROOT" \
-    --local-dir-use-symlinks False \
-    --exclude ".gitattributes" "README.md"
+try:
+    repo_id = os.environ.get('REPO_ID', 'Alfiechuang/scLightGAT')
+    target_root = os.environ.get('TARGET_ROOT', './scLightGAT_data')
+    
+    print(f"Downloading {repo_id} to {target_root}...")
+    snapshot_download(
+        repo_id=repo_id,
+        repo_type="dataset",
+        local_dir=target_root,
+        local_dir_use_symlinks=False,
+        ignore_patterns=[".gitattributes", "README.md"]
+    )
+    print("Download successful!")
+except Exception as e:
+    print(f"Error during download: {e}")
+    sys.exit(1)
+PYEOF
 
 echo ""
 echo "========================================================"
